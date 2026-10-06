@@ -87,6 +87,8 @@ public final class NativePlayerEngine: PlayerEngine {
     private var demuxer: MediaDemuxer?
     private let feedQueue = DispatchQueue(label: "com.nativeplayer.feed", qos: .userInteractive)
     private let audioFeedQueue = DispatchQueue(label: "com.nativeplayer.audiofeed", qos: .userInteractive)
+    private var audioConfigObserver: (any NSObjectProtocol)?
+    private var audioAutoFlushObserver: (any NSObjectProtocol)?
     private var timeObserver: Any?
     @ObservationIgnored
     private let isFeeding = OSAllocatedUnfairLock(initialState: false)
@@ -106,6 +108,7 @@ public final class NativePlayerEngine: PlayerEngine {
         }
 
         setupDisplayLink()
+        setupAudioObservers()
 
         timeObserver = synchronizer.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main) { [weak self] time in
             guard let self else { return }
@@ -115,6 +118,40 @@ public final class NativePlayerEngine: PlayerEngine {
                     self.currentTime = seconds
                 }
             }
+        }
+    }
+
+    private func setupAudioObservers() {
+        // When Spatial Audio mode changes (Off/Fixed/Head Tracked) or the audio route changes,
+        // CoreAudio posts AVSampleBufferAudioRendererOutputConfigurationDidChangeNotification.
+        // As documented by Apple, flushing the renderer and re-enqueuing from the current playhead
+        // acknowledges the change and allows the DSP graph to reconfigure without stalling.
+        audioConfigObserver = NotificationCenter.default.addObserver(
+            forName: .AVSampleBufferAudioRendererOutputConfigurationDidChange,
+            object: audioRenderer,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.handleAudioConfigurationChange()
+        }
+
+        audioAutoFlushObserver = NotificationCenter.default.addObserver(
+            forName: .AVSampleBufferAudioRendererWasFlushedAutomatically,
+            object: audioRenderer,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.handleAudioConfigurationChange()
+        }
+    }
+
+    private func handleAudioConfigurationChange() {
+        guard isPlaying else { return }
+        print("[NativePlayerEngine] Audio configuration changed / flushed by system (Spatial Audio toggle or route change)")
+        audioFeedQueue.async { [weak self] in
+            guard let self else { return }
+            self.audioRenderer.flush()
+            self.audioDecoder?.flush()
         }
     }
 
@@ -239,7 +276,9 @@ public final class NativePlayerEngine: PlayerEngine {
 
         // Initialize audio decoder if audio stream is present
         if newDemuxer.hasAudio, let audioParams = newDemuxer.getAudioCodecParameters() {
-            self.audioDecoder = FFAudioDecoder(codecParameters: audioParams, timebase: newDemuxer.audioTimebase)
+            let decoder = FFAudioDecoder(codecParameters: audioParams, timebase: newDemuxer.audioTimebase)
+            self.audioDecoder = decoder
+            self.audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
             print("[NativePlayerEngine] Audio decoder initialized: \(String(describing: self.audioDecoder != nil)), channels: \(newDemuxer.audioChannels), rate: \(newDemuxer.audioSampleRate)")
         } else {
             self.audioDecoder = nil
@@ -317,11 +356,24 @@ public final class NativePlayerEngine: PlayerEngine {
             }
         }
 
-        // Audio feed loop
+        // Audio feed loop with backpressure to keep CoreAudio buffer tight (~0.4s lead time)
+        // This prevents CoreAudio Spatializer DSP stalls when toggling Spatial Audio in Control Center.
         if let aDecoder = self.audioDecoder {
             let audioTimebase = demuxer.audioTimebase
+            let sync = self.synchronizer
             audioRenderer.requestMediaDataWhenReady(on: audioFeedQueue) { [demuxer, aDecoder] in
                 while aRenderer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
+                    // Check audio buffer lead time relative to current playback time
+                    let currentPlaybackSeconds = CMTimeGetSeconds(sync.currentTime())
+                    if currentPlaybackSeconds >= 0 {
+                        let audioTimeSeconds = demuxer.currentAudioPtsSeconds
+                        if audioTimeSeconds > 0 && (audioTimeSeconds - currentPlaybackSeconds) > 0.300 {
+                            // Yield from the block without blocking the thread.
+                            // The system will invoke the block again when ready.
+                            break
+                        }
+                    }
+
                     if let packet = demuxer.nextAudioPacket() {
                         let pcmBuffers = aDecoder.decode(
                             packetData: packet.data,
@@ -354,7 +406,9 @@ public final class NativePlayerEngine: PlayerEngine {
 
         demuxer.selectAudioTrack(trackId: id)
         if let params = demuxer.getAudioCodecParameters() {
-            self.audioDecoder = FFAudioDecoder(codecParameters: params, timebase: demuxer.audioTimebase)
+            let decoder = FFAudioDecoder(codecParameters: params, timebase: demuxer.audioTimebase)
+            self.audioDecoder = decoder
+            self.audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
         } else {
             self.audioDecoder = nil
         }
@@ -477,6 +531,12 @@ public final class NativePlayerEngine: PlayerEngine {
     isolated deinit {
         if let observer = timeObserver {
             synchronizer.removeTimeObserver(observer)
+        }
+        if let obs = audioConfigObserver {
+            NotificationCenter.default.removeObserver(obs)
+        }
+        if let obs = audioAutoFlushObserver {
+            NotificationCenter.default.removeObserver(obs)
         }
         if let displayLink {
             CVDisplayLinkStop(displayLink)

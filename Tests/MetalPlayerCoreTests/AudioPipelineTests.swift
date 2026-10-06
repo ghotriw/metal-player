@@ -50,7 +50,7 @@ struct AudioPipelineTests {
 
         #expect(decoder.targetSampleRate == 48000)
         #expect(decoder.targetChannels == 6) // Reference video has 5.1 (6 channels)
-        #expect(decoder.channelLayoutTag == kAudioChannelLayoutTag_MPEG_5_1_D)
+        #expect(decoder.channelLayoutTag == kAudioChannelLayoutTag_AudioUnit_5_1)
 
         // Read up to 20 audio packets and decode
         var decodedSampleBuffers: [CMSampleBuffer] = []
@@ -86,7 +86,7 @@ struct AudioPipelineTests {
 
             var layoutSize: Int = 0
             if let layoutPtr = CMAudioFormatDescriptionGetChannelLayout(formatDesc!, sizeOut: &layoutSize) {
-                #expect(layoutPtr.pointee.mChannelLayoutTag == kAudioChannelLayoutTag_MPEG_5_1_D)
+                #expect(layoutPtr.pointee.mChannelLayoutTag == kAudioChannelLayoutTag_AudioUnit_5_1)
             } else {
                 Issue.record("Missing AudioChannelLayout in CMAudioFormatDescription")
             }

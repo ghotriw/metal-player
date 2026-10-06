@@ -1,5 +1,6 @@
 # Swift Package Manager & Build artifacts
 /.build/
+/build/
 /Packages/
 Package.resolved
 

@@ -27,6 +27,13 @@ public final class MediaDemuxer: @unchecked Sendable {
     public private(set) var audioTracks: [AudioTrack] = []
     public private(set) var selectedAudioTrackIndex: Int = -1
     public private(set) var audioExtraData: Data? = nil
+    private var lastAudioPts: Int64 = -1
+    public var currentAudioPtsSeconds: Double {
+        lock.lock()
+        defer { lock.unlock() }
+        guard lastAudioPts >= 0 && audioTimebase.den > 0 else { return 0 }
+        return Double(lastAudioPts) * Double(audioTimebase.num) / Double(audioTimebase.den)
+    }
 
     public func getAudioCodecParameters() -> UnsafePointer<AVCodecParameters>? {
         lock.lock()
@@ -685,7 +692,9 @@ public final class MediaDemuxer: @unchecked Sendable {
         defer { lock.unlock() }
 
         if !audioQueue.isEmpty {
-            return audioQueue.removeFirst()
+            let p = audioQueue.removeFirst()
+            self.lastAudioPts = p.pts
+            return p
         }
 
         // If audio queue is empty, pump demuxer to find the next audio packet
@@ -708,6 +717,7 @@ public final class MediaDemuxer: @unchecked Sendable {
                     duration: pkt.duration,
                     isKeyFrame: isKey
                 )
+                self.lastAudioPts = pkt.pts
                 av_packet_unref(&pkt)
                 return audioPacket
             } else if pkt.stream_index == videoStreamIndex {
@@ -735,6 +745,7 @@ public final class MediaDemuxer: @unchecked Sendable {
         guard let ctx = formatCtx else { return }
         audioQueue.removeAll()
         videoQueue.removeAll()
+        lastAudioPts = -1
         let target = Int64(seconds * Double(timebase.den) / Double(timebase.num))
         self.targetPts = target
         let ret = av_seek_frame(ctx, Int32(videoStreamIndex), target, AVSEEK_FLAG_BACKWARD)

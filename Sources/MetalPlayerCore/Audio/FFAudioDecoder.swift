@@ -54,10 +54,10 @@ public final class FFAudioDecoder: @unchecked Sendable {
         let srcChannels = ctx.pointee.ch_layout.nb_channels
         if srcChannels >= 8 {
             self.targetChannels = 8
-            self.channelLayoutTag = kAudioChannelLayoutTag_MPEG_7_1_C // AudioUnit_7_1 standard (L R C LFE Ls Rs Rls Rrs)
+            self.channelLayoutTag = kAudioChannelLayoutTag_AudioUnit_7_1 // L R C LFE Ls Rs Rls Rrs
         } else if srcChannels >= 6 {
             self.targetChannels = 6
-            self.channelLayoutTag = kAudioChannelLayoutTag_MPEG_5_1_D // AudioUnit_5_1 standard (L R C LFE Ls Rs)
+            self.channelLayoutTag = kAudioChannelLayoutTag_AudioUnit_5_1 // L R C LFE Ls Rs (SMPTE standard)
         } else {
             self.targetChannels = 2
             self.channelLayoutTag = kAudioChannelLayoutTag_Stereo
@@ -163,7 +163,7 @@ public final class FFAudioDecoder: @unchecked Sendable {
         av_packet_unref(avPkt)
         let count = packetData.count
         guard let mem = malloc(count + Int(AV_INPUT_BUFFER_PADDING_SIZE)) else { return [] }
-        packetData.withUnsafeBytes { raw in
+        _ = packetData.withUnsafeBytes { raw in
             memcpy(mem, raw.baseAddress!, count)
         }
         memset(mem.advanced(by: count), 0, Int(AV_INPUT_BUFFER_PADDING_SIZE))
