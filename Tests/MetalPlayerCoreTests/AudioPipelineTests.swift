@@ -49,7 +49,8 @@ struct AudioPipelineTests {
         }
 
         #expect(decoder.targetSampleRate == 48000)
-        #expect(decoder.targetChannels == 2)
+        #expect(decoder.targetChannels == 6) // Reference video has 5.1 (6 channels)
+        #expect(decoder.channelLayoutTag == kAudioChannelLayoutTag_MPEG_5_1_D)
 
         // Read up to 20 audio packets and decode
         var decodedSampleBuffers: [CMSampleBuffer] = []
@@ -77,10 +78,17 @@ struct AudioPipelineTests {
 
             if let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(formatDesc!) {
                 #expect(asbd.pointee.mSampleRate == 48000.0)
-                #expect(asbd.pointee.mChannelsPerFrame == 2)
+                #expect(asbd.pointee.mChannelsPerFrame == 6)
                 #expect(asbd.pointee.mFormatID == kAudioFormatLinearPCM)
                 #expect(asbd.pointee.mBitsPerChannel == 32)
                 #expect((asbd.pointee.mFormatFlags & kAudioFormatFlagIsFloat) != 0)
+            }
+
+            var layoutSize: Int = 0
+            if let layoutPtr = CMAudioFormatDescriptionGetChannelLayout(formatDesc!, sizeOut: &layoutSize) {
+                #expect(layoutPtr.pointee.mChannelLayoutTag == kAudioChannelLayoutTag_MPEG_5_1_D)
+            } else {
+                Issue.record("Missing AudioChannelLayout in CMAudioFormatDescription")
             }
         }
     }

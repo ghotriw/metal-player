@@ -97,6 +97,7 @@ public final class NativePlayerEngine: PlayerEngine {
     public init() {
         synchronizer.addRenderer(displayLayer)
         synchronizer.addRenderer(audioRenderer)
+        audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
         displayLayer.videoGravity = .resizeAspect
 
         let queue = self.frameQueue

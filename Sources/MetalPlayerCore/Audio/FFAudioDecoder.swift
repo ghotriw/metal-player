@@ -5,7 +5,8 @@ import CFFmpeg
 import os
 
 /// Decodes audio packets using FFmpeg libavcodec and resamples via libswresample
-/// to 48kHz Stereo Float32 Linear PCM wrapped in CoreMedia CMSampleBuffers.
+/// to 48kHz Multi-channel (5.1 / 7.1) or Stereo Float32 Linear PCM wrapped in CoreMedia CMSampleBuffers
+/// with explicit AudioChannelLayout for Apple Spatial Audio and Dynamic Head Tracking.
 public final class FFAudioDecoder: @unchecked Sendable {
     private var codecCtx: UnsafeMutablePointer<AVCodecContext>?
     private var swrCtx: OpaquePointer?
@@ -14,7 +15,8 @@ public final class FFAudioDecoder: @unchecked Sendable {
     private var audioFormatDescription: CMAudioFormatDescription?
 
     public let targetSampleRate: Int32 = 48000
-    public let targetChannels: Int32 = 2
+    public let targetChannels: Int32
+    public let channelLayoutTag: AudioChannelLayoutTag
 
     private let lock = NSLock()
 
@@ -45,6 +47,22 @@ public final class FFAudioDecoder: @unchecked Sendable {
             return nil
         }
 
+        // Determine channel count and layout for Spatial Audio:
+        // - 8 channels: 7.1 Surround (L, R, C, LFE, Ls, Rs, Rls, Rrs)
+        // - 6 channels: 5.1 Surround (L, R, C, LFE, Ls, Rs)
+        // - <= 2 channels: Stereo (L, R) or downmixed from non-standard (3.0, 4.0, 5.0)
+        let srcChannels = ctx.pointee.ch_layout.nb_channels
+        if srcChannels >= 8 {
+            self.targetChannels = 8
+            self.channelLayoutTag = kAudioChannelLayoutTag_MPEG_7_1_C // AudioUnit_7_1 standard (L R C LFE Ls Rs Rls Rrs)
+        } else if srcChannels >= 6 {
+            self.targetChannels = 6
+            self.channelLayoutTag = kAudioChannelLayoutTag_MPEG_5_1_D // AudioUnit_5_1 standard (L R C LFE Ls Rs)
+        } else {
+            self.targetChannels = 2
+            self.channelLayoutTag = kAudioChannelLayoutTag_Stereo
+        }
+
         self.frame = av_frame_alloc()
         self.packet = av_packet_alloc()
 
@@ -57,27 +75,33 @@ public final class FFAudioDecoder: @unchecked Sendable {
     }
 
     private func setupFormatDescription() {
-        // Standard macOS CoreAudio PCM format: 48kHz, Stereo, Float32 Non-Interleaved (or Interleaved)
-        // AVSampleBufferAudioRenderer accepts Float32 or Int16 linear PCM.
-        // We use interleaved 32-bit Float PCM: 2 channels * 4 bytes = 8 bytes per frame
+        // Standard macOS CoreAudio PCM format: 48kHz, Float32 Linear PCM.
+        // For Spatial Audio, CoreAudio requires an explicit AudioChannelLayout
+        // matching the multi-channel arrangement (5.1 or 7.1).
+        let bytesPerFrame = UInt32(targetChannels * 4) // 4 bytes per Float32
         var asbd = AudioStreamBasicDescription(
             mSampleRate: Float64(targetSampleRate),
             mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: UInt32(targetChannels * 4),
+            mBytesPerPacket: bytesPerFrame,
             mFramesPerPacket: 1,
-            mBytesPerFrame: UInt32(targetChannels * 4),
+            mBytesPerFrame: bytesPerFrame,
             mChannelsPerFrame: UInt32(targetChannels),
             mBitsPerChannel: 32,
             mReserved: 0
         )
 
+        var channelLayout = AudioChannelLayout()
+        channelLayout.mChannelLayoutTag = channelLayoutTag
+        channelLayout.mChannelBitmap = []
+        channelLayout.mNumberChannelDescriptions = 0
+
         var formatDesc: CMAudioFormatDescription?
         let status = CMAudioFormatDescriptionCreate(
             allocator: kCFAllocatorDefault,
             asbd: &asbd,
-            layoutSize: 0,
-            layout: nil,
+            layoutSize: MemoryLayout<AudioChannelLayout>.size,
+            layout: &channelLayout,
             magicCookieSize: 0,
             magicCookie: nil,
             extensions: nil,
@@ -86,6 +110,7 @@ public final class FFAudioDecoder: @unchecked Sendable {
 
         if status == noErr {
             self.audioFormatDescription = formatDesc
+            print("[FFAudioDecoder] Created CMAudioFormatDescription: \(targetChannels)ch @ 48kHz, tag: \(channelLayoutTag)")
         } else {
             print("[FFAudioDecoder] Failed to create CMAudioFormatDescription: \(status)")
         }
@@ -237,7 +262,6 @@ public final class FFAudioDecoder: @unchecked Sendable {
             )
 
             var sampleBuffer: CMSampleBuffer?
-            var sampleSize = actualByteLength
             let status = CMSampleBufferCreateReady(
                 allocator: kCFAllocatorDefault,
                 dataBuffer: validBlockBuffer,
@@ -245,8 +269,8 @@ public final class FFAudioDecoder: @unchecked Sendable {
                 sampleCount: CMItemCount(convertedSamples),
                 sampleTimingEntryCount: 1,
                 sampleTimingArray: &timing,
-                sampleSizeEntryCount: 1,
-                sampleSizeArray: &sampleSize,
+                sampleSizeEntryCount: 0,
+                sampleSizeArray: nil,
                 sampleBufferOut: &sampleBuffer
             )
 
