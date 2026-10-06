@@ -14,6 +14,45 @@ public final class MediaDemuxer: @unchecked Sendable {
     public private(set) var audioCodecId: AVCodecID = AV_CODEC_ID_NONE
     public private(set) var audioChannels: Int = 0
     public private(set) var audioSampleRate: Int = 0
+    public struct AudioTrack: Sendable, Identifiable {
+        public let id: Int
+        public let streamIndex: Int
+        public let title: String
+        public let language: String
+        public let codecName: String
+        public let channels: Int
+        public let sampleRate: Int
+    }
+
+    public private(set) var audioTracks: [AudioTrack] = []
+    public private(set) var selectedAudioTrackIndex: Int = -1
+    public private(set) var audioExtraData: Data? = nil
+
+    public func getAudioCodecParameters() -> UnsafePointer<AVCodecParameters>? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let ctx = formatCtx, audioStreamIndex >= 0 else { return nil }
+        return UnsafePointer(ctx.pointee.streams[audioStreamIndex]!.pointee.codecpar)
+    }
+
+    public func selectAudioTrack(trackId: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let ctx = formatCtx, let track = audioTracks.first(where: { $0.id == trackId }) else { return }
+        self.audioStreamIndex = track.streamIndex
+        self.selectedAudioTrackIndex = track.id
+        let stream = ctx.pointee.streams[track.streamIndex]!
+        self.audioTimebase = stream.pointee.time_base
+        self.audioCodecId = stream.pointee.codecpar.pointee.codec_id
+        self.audioChannels = Int(stream.pointee.codecpar.pointee.ch_layout.nb_channels)
+        self.audioSampleRate = Int(stream.pointee.codecpar.pointee.sample_rate)
+        if let ed = stream.pointee.codecpar.pointee.extradata, stream.pointee.codecpar.pointee.extradata_size > 0 {
+            self.audioExtraData = Data(bytes: ed, count: Int(stream.pointee.codecpar.pointee.extradata_size))
+        } else {
+            self.audioExtraData = nil
+        }
+        self.audioQueue.removeAll()
+    }
 
     // Packet queue for demuxed audio packets
     public struct DemuxedAudioPacket: Sendable {
@@ -23,8 +62,20 @@ public final class MediaDemuxer: @unchecked Sendable {
         public let duration: Int64
         public let isKeyFrame: Bool
     }
+
+    // Packet queue for demuxed video packets (preserves video if audio pump reads ahead)
+    private struct DemuxedVideoPacket: Sendable {
+        let data: Data
+        let pts: Int64
+        let dts: Int64
+        let duration: Int64
+        let flags: Int32
+    }
+
     private var audioQueue: [DemuxedAudioPacket] = []
-    private let maxAudioQueueCount = 200
+    private var videoQueue: [DemuxedVideoPacket] = []
+    private let maxAudioQueueCount = 500
+    private let maxVideoQueueCount = 180
     public private(set) var formatDescription: CMVideoFormatDescription?
     public private(set) var durationSeconds: Double = 0
     public private(set) var width: Int = 0
@@ -163,14 +214,47 @@ public final class MediaDemuxer: @unchecked Sendable {
                         }
                     }
                 }
-            } else if stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_AUDIO && self.audioStreamIndex < 0 {
-                // First audio stream found
-                self.audioStreamIndex = i
-                self.audioTimebase = stream.pointee.time_base
-                self.audioCodecId = codecId
-                self.hasAudio = true
-                self.audioChannels = Int(stream.pointee.codecpar.pointee.ch_layout.nb_channels)
-                self.audioSampleRate = Int(stream.pointee.codecpar.pointee.sample_rate)
+            } else if stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_AUDIO {
+                // Read track metadata (title, language)
+                var title = ""
+                var lang = ""
+                if let titleTag = av_dict_get(stream.pointee.metadata, "title", nil, 0) {
+                    title = String(cString: titleTag.pointee.value)
+                }
+                if let langTag = av_dict_get(stream.pointee.metadata, "language", nil, 0) {
+                    lang = String(cString: langTag.pointee.value)
+                }
+                let codecNameStr: String
+                if let codecDesc = avcodec_descriptor_get(codecId), let name = codecDesc.pointee.name {
+                    codecNameStr = String(cString: name)
+                } else {
+                    codecNameStr = "audio"
+                }
+
+                let track = AudioTrack(
+                    id: self.audioTracks.count,
+                    streamIndex: i,
+                    title: title,
+                    language: lang,
+                    codecName: codecNameStr,
+                    channels: Int(stream.pointee.codecpar.pointee.ch_layout.nb_channels),
+                    sampleRate: Int(stream.pointee.codecpar.pointee.sample_rate)
+                )
+                self.audioTracks.append(track)
+
+                if self.audioStreamIndex < 0 {
+                    // First audio stream found - select as default
+                    self.audioStreamIndex = i
+                    self.selectedAudioTrackIndex = track.id
+                    self.audioTimebase = stream.pointee.time_base
+                    self.audioCodecId = codecId
+                    self.hasAudio = true
+                    self.audioChannels = track.channels
+                    self.audioSampleRate = track.sampleRate
+                    if let ed = stream.pointee.codecpar.pointee.extradata, stream.pointee.codecpar.pointee.extradata_size > 0 {
+                        self.audioExtraData = Data(bytes: ed, count: Int(stream.pointee.codecpar.pointee.extradata_size))
+                    }
+                }
             }
         }
 
@@ -469,107 +553,124 @@ public final class MediaDemuxer: @unchecked Sendable {
 
     private var targetPts: Int64 = -1
 
+    private func createVideoSample(from rawData: Data, pts: Int64, dts: Int64, duration: Int64) -> CMSampleBuffer? {
+        guard let formatDesc = formatDescription else { return nil }
+
+        let (hvccData, hvccSize) = rawData.withUnsafeBytes { raw in
+            Self.packetDataToHVCC(pktData: raw.baseAddress!.assumingMemoryBound(to: UInt8.self), count: rawData.count)
+        }
+        guard hvccSize > 0, let mem = malloc(hvccSize) else {
+            return nil
+        }
+        _ = hvccData.withUnsafeBytes { rawBytes in
+            memcpy(mem, rawBytes.baseAddress!, hvccSize)
+        }
+
+        var blockBuffer: CMBlockBuffer?
+        let blockStatus = CMBlockBufferCreateWithMemoryBlock(
+            allocator: kCFAllocatorDefault,
+            memoryBlock: mem,
+            blockLength: hvccSize,
+            blockAllocator: kCFAllocatorMalloc,
+            customBlockSource: nil,
+            offsetToData: 0,
+            dataLength: hvccSize,
+            flags: 0,
+            blockBufferOut: &blockBuffer
+        )
+
+        if blockStatus != kCMBlockBufferNoErr {
+            free(mem)
+            return nil
+        }
+
+        let noPtsValue = Int64.min
+        let ptsVal = pts != noPtsValue ? pts : dts
+        let dtsVal = dts != noPtsValue ? dts : ptsVal
+
+        let timebaseDen = timebase.den
+        let timebaseNum = Int64(timebase.num)
+        var timing = CMSampleTimingInfo(
+            duration: duration > 0 ? CMTime(value: duration * timebaseNum, timescale: timebaseDen) : .invalid,
+            presentationTimeStamp: CMTime(value: ptsVal * timebaseNum, timescale: timebaseDen),
+            decodeTimeStamp: CMTime(value: dtsVal * timebaseNum, timescale: timebaseDen)
+        )
+
+        var sampleBuffer: CMSampleBuffer?
+        var sampleSize = hvccSize
+        let status = CMSampleBufferCreateReady(
+            allocator: kCFAllocatorDefault,
+            dataBuffer: blockBuffer,
+            formatDescription: formatDesc,
+            sampleCount: 1,
+            sampleTimingEntryCount: 1,
+            sampleTimingArray: &timing,
+            sampleSizeEntryCount: 1,
+            sampleSizeArray: &sampleSize,
+            sampleBufferOut: &sampleBuffer
+        )
+
+        let isBeforeTarget = targetPts >= 0 && ptsVal < targetPts
+        if targetPts >= 0 && ptsVal >= targetPts {
+            targetPts = -1
+        }
+
+        if status == noErr, let sb = sampleBuffer {
+            CMSetAttachment(sb, key: kCVImageBufferColorPrimariesKey, value: colorPrimaries, attachmentMode: kCMAttachmentMode_ShouldPropagate)
+            CMSetAttachment(sb, key: kCVImageBufferTransferFunctionKey, value: transferFunction, attachmentMode: kCMAttachmentMode_ShouldPropagate)
+            CMSetAttachment(sb, key: kCVImageBufferYCbCrMatrixKey, value: yCbCrMatrix, attachmentMode: kCMAttachmentMode_ShouldPropagate)
+            if let masteringDisplay {
+                CMSetAttachment(sb, key: kCVImageBufferMasteringDisplayColorVolumeKey, value: masteringDisplay as CFData, attachmentMode: kCMAttachmentMode_ShouldPropagate)
+            }
+            if let contentLightLevel {
+                CMSetAttachment(sb, key: kCVImageBufferContentLightLevelInfoKey, value: contentLightLevel as CFData, attachmentMode: kCMAttachmentMode_ShouldPropagate)
+            }
+
+            if isBeforeTarget {
+                if let attachments = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: true) as? [NSMutableDictionary], let first = attachments.first {
+                    first[kCMSampleAttachmentKey_DoNotDisplay] = true
+                }
+            }
+            return sb
+        }
+        return nil
+    }
+
     public func nextVideoSample() -> CMSampleBuffer? {
         lock.lock()
         defer { lock.unlock() }
-        guard let ctx = formatCtx, let formatDesc = formatDescription else { return nil }
+
+        // Drain videoQueue first if audio reading buffered video packets
+        while !videoQueue.isEmpty {
+            let vp = videoQueue.removeFirst()
+            if let sample = createVideoSample(from: vp.data, pts: vp.pts, dts: vp.dts, duration: vp.duration) {
+                return sample
+            }
+        }
+
+        guard let ctx = formatCtx, formatDescription != nil else { return nil }
 
         var pkt = AVPacket()
         while av_read_frame(ctx, &pkt) >= 0 {
             if pkt.stream_index == videoStreamIndex {
-                let (hvccData, hvccSize) = Self.packetDataToHVCC(pktData: pkt.data, count: Int(pkt.size))
-                guard hvccSize > 0, let mem = malloc(hvccSize) else {
-                    av_packet_unref(&pkt)
-                    continue
-                }
-                _ = hvccData.withUnsafeBytes { rawBytes in
-                    memcpy(mem, rawBytes.baseAddress!, hvccSize)
-                }
-
-                var blockBuffer: CMBlockBuffer?
-                let blockStatus = CMBlockBufferCreateWithMemoryBlock(
-                    allocator: kCFAllocatorDefault,
-                    memoryBlock: mem,
-                    blockLength: hvccSize,
-                    blockAllocator: kCFAllocatorMalloc,
-                    customBlockSource: nil,
-                    offsetToData: 0,
-                    dataLength: hvccSize,
-                    flags: 0,
-                    blockBufferOut: &blockBuffer
-                )
-
-                if blockStatus != kCMBlockBufferNoErr {
-                    free(mem)
-                    av_packet_unref(&pkt)
-                    continue
-                }
-
-                let noPtsValue = Int64.min
-                let ptsVal = pkt.pts != noPtsValue ? pkt.pts : pkt.dts
-                let dtsVal = pkt.dts != noPtsValue ? pkt.dts : ptsVal
-
-                let timebaseDen = timebase.den
-                let timebaseNum = Int64(timebase.num)
-                var timing = CMSampleTimingInfo(
-                    duration: pkt.duration > 0 ? CMTime(value: pkt.duration * timebaseNum, timescale: timebaseDen) : .invalid,
-                    presentationTimeStamp: CMTime(value: ptsVal * timebaseNum, timescale: timebaseDen),
-                    decodeTimeStamp: CMTime(value: dtsVal * timebaseNum, timescale: timebaseDen)
-                )
-
-                var sampleBuffer: CMSampleBuffer?
-                var sampleSize = hvccSize
-                let status = CMSampleBufferCreateReady(
-                    allocator: kCFAllocatorDefault,
-                    dataBuffer: blockBuffer,
-                    formatDescription: formatDesc,
-                    sampleCount: 1,
-                    sampleTimingEntryCount: 1,
-                    sampleTimingArray: &timing,
-                    sampleSizeEntryCount: 1,
-                    sampleSizeArray: &sampleSize,
-                    sampleBufferOut: &sampleBuffer
-                )
-
-                let isBeforeTarget = targetPts >= 0 && ptsVal < targetPts
-                if targetPts >= 0 && ptsVal >= targetPts {
-                    targetPts = -1
-                }
-
+                let data = Data(bytes: pkt.data, count: Int(pkt.size))
+                let sample = createVideoSample(from: data, pts: pkt.pts, dts: pkt.dts, duration: pkt.duration)
                 av_packet_unref(&pkt)
-                if status == noErr, let sb = sampleBuffer {
-                    // Propagate HDR / SDR color metadata attachments
-                    CMSetAttachment(sb, key: kCVImageBufferColorPrimariesKey, value: colorPrimaries, attachmentMode: kCMAttachmentMode_ShouldPropagate)
-                    CMSetAttachment(sb, key: kCVImageBufferTransferFunctionKey, value: transferFunction, attachmentMode: kCMAttachmentMode_ShouldPropagate)
-                    CMSetAttachment(sb, key: kCVImageBufferYCbCrMatrixKey, value: yCbCrMatrix, attachmentMode: kCMAttachmentMode_ShouldPropagate)
-                    if let masteringDisplay {
-                        CMSetAttachment(sb, key: kCVImageBufferMasteringDisplayColorVolumeKey, value: masteringDisplay as CFData, attachmentMode: kCMAttachmentMode_ShouldPropagate)
-                    }
-                    if let contentLightLevel {
-                        CMSetAttachment(sb, key: kCVImageBufferContentLightLevelInfoKey, value: contentLightLevel as CFData, attachmentMode: kCMAttachmentMode_ShouldPropagate)
-                    }
-
-                    if isBeforeTarget {
-                        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: true) as? [NSMutableDictionary], let first = attachments.first {
-                            first[kCMSampleAttachmentKey_DoNotDisplay] = true
-                        }
-                    }
-                    return sb
+                if let sample {
+                    return sample
                 }
             } else if pkt.stream_index == audioStreamIndex {
                 // Buffer audio packet for Stage 2 audio pipeline
-                if audioQueue.count < maxAudioQueueCount {
-                    let data = Data(bytes: pkt.data, count: Int(pkt.size))
-                    let isKey = (pkt.flags & AV_PKT_FLAG_KEY) != 0
-                    let audioPacket = DemuxedAudioPacket(
-                        data: data,
-                        pts: pkt.pts,
-                        dts: pkt.dts,
-                        duration: pkt.duration,
-                        isKeyFrame: isKey
-                    )
-                    audioQueue.append(audioPacket)
-                }
+                let data = Data(bytes: pkt.data, count: Int(pkt.size))
+                let isKey = (pkt.flags & AV_PKT_FLAG_KEY) != 0
+                let audioPacket = DemuxedAudioPacket(
+                    data: data,
+                    pts: pkt.pts,
+                    dts: pkt.dts,
+                    duration: pkt.duration,
+                    isKeyFrame: isKey
+                )
+                audioQueue.append(audioPacket)
                 av_packet_unref(&pkt)
             } else {
                 av_packet_unref(&pkt)
@@ -590,6 +691,11 @@ public final class MediaDemuxer: @unchecked Sendable {
         // If audio queue is empty, pump demuxer to find the next audio packet
         guard let ctx = formatCtx, audioStreamIndex >= 0 else { return nil }
 
+        // Backpressure check: if videoQueue is already large, don't read endlessly ahead
+        if videoQueue.count >= maxVideoQueueCount {
+            return nil
+        }
+
         var pkt = AVPacket()
         while av_read_frame(ctx, &pkt) >= 0 {
             if pkt.stream_index == audioStreamIndex {
@@ -604,8 +710,19 @@ public final class MediaDemuxer: @unchecked Sendable {
                 )
                 av_packet_unref(&pkt)
                 return audioPacket
+            } else if pkt.stream_index == videoStreamIndex {
+                // Symmetric buffering: preserve ALL video packets without dropping GOP frames!
+                let data = Data(bytes: pkt.data, count: Int(pkt.size))
+                let videoPacket = DemuxedVideoPacket(
+                    data: data,
+                    pts: pkt.pts,
+                    dts: pkt.dts,
+                    duration: pkt.duration,
+                    flags: pkt.flags
+                )
+                videoQueue.append(videoPacket)
+                av_packet_unref(&pkt)
             } else {
-                // If it's video or other, discard or let nextVideoSample handle its own cycle
                 av_packet_unref(&pkt)
             }
         }
@@ -617,6 +734,7 @@ public final class MediaDemuxer: @unchecked Sendable {
         defer { lock.unlock() }
         guard let ctx = formatCtx else { return }
         audioQueue.removeAll()
+        videoQueue.removeAll()
         let target = Int64(seconds * Double(timebase.den) / Double(timebase.num))
         self.targetPts = target
         let ret = av_seek_frame(ctx, Int32(videoStreamIndex), target, AVSEEK_FLAG_BACKWARD)

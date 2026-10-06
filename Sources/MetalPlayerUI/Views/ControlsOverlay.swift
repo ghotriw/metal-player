@@ -200,6 +200,50 @@ public struct ControlsOverlay: View {
                     }
 
                     Spacer()
+
+                    // Audio Track Selector (if media has multiple audio tracks)
+                    if !engine.audioTracks.isEmpty {
+                        Menu {
+                            ForEach(engine.audioTracks) { track in
+                                Button {
+                                    engine.selectAudioTrack(id: track.id)
+                                } label: {
+                                    HStack {
+                                        let label = formatTrackTitle(track)
+                                        Text("\(label) (\(track.codecName), \(track.channels)ch)")
+                                        if track.id == engine.selectedAudioTrackId {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "waveform.circle")
+                                .font(.title3)
+                                .foregroundStyle(.white.opacity(0.85))
+                        }
+                        .menuStyle(.borderlessButton)
+                        .frame(width: 24)
+                        .help("Select Audio Track")
+                    }
+
+                    // Volume & Mute Control
+                    HStack(spacing: 6) {
+                        Button {
+                            engine.isMuted.toggle()
+                        } label: {
+                            Image(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : (engine.volume < 0.5 ? "speaker.wave.1.fill" : "speaker.wave.2.fill"))
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.85))
+                        }
+                        .buttonStyle(.plain)
+
+                        Slider(value: $engine.volume, in: 0.0...1.0)
+                            .frame(width: 70)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
                 }
             }
             .padding(.horizontal, 18)
@@ -247,5 +291,19 @@ public struct ControlsOverlay: View {
         jumpTimeText = ""
         isFieldFocused = false
         isInteracting = false
+    }
+
+    private func formatTrackTitle(_ track: MediaDemuxer.AudioTrack) -> String {
+        if !track.title.isEmpty {
+            return track.title
+        }
+        if !track.language.isEmpty {
+            let loc = Locale.current
+            if let localized = loc.localizedString(forLanguageCode: track.language) {
+                return localized.capitalized
+            }
+            return track.language.uppercased()
+        }
+        return "Track \(track.id + 1)"
     }
 }

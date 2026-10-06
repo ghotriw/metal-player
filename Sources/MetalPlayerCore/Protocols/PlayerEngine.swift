@@ -28,6 +28,11 @@ public protocol PlayerEngine: AnyObject, Sendable {
     @MainActor var metalTargetNits: Float { get set }
     @MainActor var metalSharpness: Float { get set }
 
+    @MainActor var volume: Float { get set }
+    @MainActor var isMuted: Bool { get set }
+    @MainActor var audioTracks: [MediaDemuxer.AudioTrack] { get }
+    @MainActor var selectedAudioTrackId: Int { get }
+
     @MainActor func load(path: String)
     @MainActor func play()
     @MainActor func pause()
@@ -35,4 +40,5 @@ public protocol PlayerEngine: AnyObject, Sendable {
     @MainActor func stepFrameForward()
     @MainActor func stepFrameBackward()
     @MainActor func renderCurrentFrame()
+    @MainActor func selectAudioTrack(id: Int)
 }

@@ -12,10 +12,10 @@ let package = Package(
     targets: [
         .systemLibrary(
             name: "CFFmpeg",
-            pkgConfig: "libavformat libavcodec libavutil",
+            pkgConfig: "libavformat libavcodec libavutil libswresample",
             providers: [
                 .brew(["ffmpeg"]),
-                .apt(["libavformat-dev", "libavcodec-dev", "libavutil-dev"])
+                .apt(["libavformat-dev", "libavcodec-dev", "libavutil-dev", "libswresample-dev"])
             ]
         ),
         .target(

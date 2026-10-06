@@ -60,12 +60,33 @@ public final class NativePlayerEngine: PlayerEngine {
         }
     }
 
+    // Audio properties
+    public var volume: Float = 1.0 {
+        didSet {
+            audioRenderer.volume = isMuted ? 0.0 : volume
+        }
+    }
+    public var isMuted: Bool = false {
+        didSet {
+            audioRenderer.volume = isMuted ? 0.0 : volume
+        }
+    }
+    public var audioTracks: [MediaDemuxer.AudioTrack] {
+        demuxer?.audioTracks ?? []
+    }
+    public var selectedAudioTrackId: Int {
+        demuxer?.selectedAudioTrackIndex ?? -1
+    }
+
     public let displayLayer = AVSampleBufferDisplayLayer()
     public let metalRenderer = MetalVideoRenderer()
+    public let audioRenderer = AVSampleBufferAudioRenderer()
     private let decoder = VTVideoDecoder()
+    private var audioDecoder: FFAudioDecoder?
     private let synchronizer = AVSampleBufferRenderSynchronizer()
     private var demuxer: MediaDemuxer?
     private let feedQueue = DispatchQueue(label: "com.nativeplayer.feed", qos: .userInteractive)
+    private let audioFeedQueue = DispatchQueue(label: "com.nativeplayer.audiofeed", qos: .userInteractive)
     private var timeObserver: Any?
     @ObservationIgnored
     private let isFeeding = OSAllocatedUnfairLock(initialState: false)
@@ -75,6 +96,7 @@ public final class NativePlayerEngine: PlayerEngine {
 
     public init() {
         synchronizer.addRenderer(displayLayer)
+        synchronizer.addRenderer(audioRenderer)
         displayLayer.videoGravity = .resizeAspect
 
         let queue = self.frameQueue
@@ -214,9 +236,22 @@ public final class NativePlayerEngine: PlayerEngine {
         }
         print("[NativePlayerEngine] Loaded successfully. Duration: \(duration)s, peakNits: \(newDemuxer.maxPeakNits), formatDesc: \(String(describing: newDemuxer.formatDescription))")
 
+        // Initialize audio decoder if audio stream is present
+        if newDemuxer.hasAudio, let audioParams = newDemuxer.getAudioCodecParameters() {
+            self.audioDecoder = FFAudioDecoder(codecParameters: audioParams, timebase: newDemuxer.audioTimebase)
+            print("[NativePlayerEngine] Audio decoder initialized: \(String(describing: self.audioDecoder != nil)), channels: \(newDemuxer.audioChannels), rate: \(newDemuxer.audioSampleRate)")
+        } else {
+            self.audioDecoder = nil
+            print("[NativePlayerEngine] No audio track found or failed to get codec parameters")
+        }
+
         isFeeding.withLock { $0 = false }
         displayLayer.stopRequestingMediaData()
         displayLayer.flush()
+        audioRenderer.stopRequestingMediaData()
+        audioRenderer.flush()
+        audioDecoder?.flush()
+
         let decoder = self.decoder
         feedQueue.async { [weak self] in
             decoder.flush()
@@ -240,11 +275,13 @@ public final class NativePlayerEngine: PlayerEngine {
         let feedingLock = self.isFeeding
         let modeLock = self.activeRenderModeLock
         nonisolated(unsafe) let layer = self.displayLayer
+        nonisolated(unsafe) let aRenderer = self.audioRenderer
 
         let sampleCountLock = OSAllocatedUnfairLock(initialState: 0)
         let decoder = self.decoder
         let queue = self.frameQueue
 
+        // Video feed loop
         displayLayer.requestMediaDataWhenReady(on: feedQueue) { [demuxer] in
             while layer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
                 // Backpressure: If Metal tone mapping is active and frameQueue already has >45 decoded frames (~1.8 seconds),
@@ -278,6 +315,52 @@ public final class NativePlayerEngine: PlayerEngine {
                 }
             }
         }
+
+        // Audio feed loop
+        if let aDecoder = self.audioDecoder {
+            let audioTimebase = demuxer.audioTimebase
+            audioRenderer.requestMediaDataWhenReady(on: audioFeedQueue) { [demuxer, aDecoder] in
+                while aRenderer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
+                    if let packet = demuxer.nextAudioPacket() {
+                        let pcmBuffers = aDecoder.decode(
+                            packetData: packet.data,
+                            pts: packet.pts,
+                            timebase: audioTimebase
+                        )
+                        for buf in pcmBuffers {
+                            aRenderer.enqueue(buf)
+                        }
+                    } else {
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    public func selectAudioTrack(id: Int) {
+        guard let demuxer = self.demuxer else { return }
+        print("[NativePlayerEngine] Switching to audio track: \(id)")
+        let wasPlaying = isPlaying
+        pause()
+
+        // Stop requesting data and wait for audioFeedQueue to finish executing any in-flight block
+        audioRenderer.stopRequestingMediaData()
+        audioFeedQueue.sync { }
+
+        audioRenderer.flush()
+        audioDecoder?.flush()
+
+        demuxer.selectAudioTrack(trackId: id)
+        if let params = demuxer.getAudioCodecParameters() {
+            self.audioDecoder = FFAudioDecoder(codecParameters: params, timebase: demuxer.audioTimebase)
+        } else {
+            self.audioDecoder = nil
+        }
+
+        if wasPlaying {
+            play()
+        }
     }
 
     public func play() {
@@ -298,6 +381,9 @@ public final class NativePlayerEngine: PlayerEngine {
         if let displayLink {
             CVDisplayLinkStop(displayLink)
         }
+        isFeeding.withLock { $0 = false }
+        displayLayer.stopRequestingMediaData()
+        audioRenderer.stopRequestingMediaData()
         isPlaying = false
     }
 
@@ -318,6 +404,9 @@ public final class NativePlayerEngine: PlayerEngine {
         isFeeding.withLock { $0 = false }
         displayLayer.stopRequestingMediaData()
         displayLayer.flush()
+        audioRenderer.stopRequestingMediaData()
+        audioRenderer.flush()
+        audioDecoder?.flush()
         frameQueue.clear()
 
         currentTime = seconds
@@ -394,5 +483,6 @@ public final class NativePlayerEngine: PlayerEngine {
         }
         isFeeding.withLock { $0 = false }
         displayLayer.stopRequestingMediaData()
+        audioRenderer.stopRequestingMediaData()
     }
 }
