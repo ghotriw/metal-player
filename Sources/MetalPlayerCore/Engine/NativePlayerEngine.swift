@@ -35,6 +35,7 @@ public final class NativePlayerEngine: PlayerEngine {
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             metalRenderer?.metalLayer.isHidden = !isMetalLayerVisible
+            displayLayer.isHidden = isMetalLayerVisible
             CATransaction.commit()
         }
     }

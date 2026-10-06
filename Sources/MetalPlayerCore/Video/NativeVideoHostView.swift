@@ -44,7 +44,7 @@ public final class NativeVideoHostView: NSView {
     public func updateMode() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        engine.displayLayer.isHidden = false
+        engine.displayLayer.isHidden = engine.isMetalLayerVisible
         engine.metalRenderer?.metalLayer.isHidden = !engine.isMetalLayerVisible
         CATransaction.commit()
         needsLayout = true
