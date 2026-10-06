@@ -1,0 +1,35 @@
+# Swift Package Manager & Build artifacts
+/.build/
+/Packages/
+Package.resolved
+
+# Xcode
+*.xcodeproj
+*.xcworkspace
+!default.xcworkspace
+xcuserdata/
+DerivedData/
+.swiftpm/xcode/xcuserdata/
+.swiftpm/configuration/
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Temporary & Local files
+/tmp/
+*.log
+
+# IDEs
+.idea/
+.vscode/
+
+# Local test media
+*.mkv
+*.mp4
+*.ts
+*.mov
