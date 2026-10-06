@@ -70,8 +70,31 @@ public final class VTVideoDecoder: @unchecked Sendable {
 
         self.currentFormatDescription = formatDescription
 
+        // Determine bit depth and range from formatDescription extensions
+        var pixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        let extensions = CMFormatDescriptionGetExtensions(formatDescription) as? [String: Any]
+        let isFullRange = (extensions?[kCMFormatDescriptionExtension_FullRangeVideo as String] as? Bool) ?? false
+
+        // Check if format is 10-bit:
+        // CoreMedia format descriptions for 10-bit H.264/HEVC specify depth or contain 10-bit transfer/primaries/sub-types
+        let mediaSubType = CMFormatDescriptionGetMediaSubType(formatDescription)
+        let depth = (extensions?[kCMFormatDescriptionExtension_Depth as String] as? NSNumber)?.intValue ?? 24
+        let transfer = extensions?[kCVImageBufferTransferFunctionKey as String] as? String
+
+        let is10Bit = depth > 24 ||
+                      transfer == (kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String) ||
+                      transfer == (kCVImageBufferTransferFunction_ITU_R_2100_HLG as String) ||
+                      mediaSubType == kCMVideoCodecType_HEVC ||
+                      mediaSubType == kCMVideoCodecType_HEVCWithAlpha
+
+        if is10Bit {
+            pixelFormat = isFullRange ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+        } else {
+            pixelFormat = isFullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        }
+
         let destinationImageBufferAttributes: [String: Any] = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+            kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
             kCVPixelBufferMetalCompatibilityKey as String: true,
             kCVPixelBufferOpenGLCompatibilityKey as String: false
         ]

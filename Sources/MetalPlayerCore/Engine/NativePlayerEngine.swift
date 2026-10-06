@@ -64,7 +64,7 @@ public final class NativePlayerEngine: PlayerEngine {
     public let metalRenderer = MetalVideoRenderer()
     private let decoder = VTVideoDecoder()
     private let synchronizer = AVSampleBufferRenderSynchronizer()
-    private var demuxer: HEVCDemuxer?
+    private var demuxer: MediaDemuxer?
     private let feedQueue = DispatchQueue(label: "com.nativeplayer.feed", qos: .userInteractive)
     private var timeObserver: Any?
     @ObservationIgnored
@@ -171,8 +171,8 @@ public final class NativePlayerEngine: PlayerEngine {
 
     public func load(path: String) {
         print("[NativePlayerEngine] Loading:", path)
-        guard let newDemuxer = HEVCDemuxer(url: path) else {
-            print("[NativePlayerEngine] Failed to open file with HEVCDemuxer:", path)
+        guard let newDemuxer = MediaDemuxer(url: path) else {
+            print("[NativePlayerEngine] Failed to open file with MediaDemuxer:", path)
             return
         }
 
@@ -182,7 +182,36 @@ public final class NativePlayerEngine: PlayerEngine {
         self.videoHeight = newDemuxer.height
         self.mediaTitle = URL(fileURLWithPath: path).lastPathComponent
         self.isLoaded = true
-        self.metalRenderer?.uniforms.sourcePeakNits = newDemuxer.maxPeakNits
+        self.metalRenderer?.updateUniforms { uniforms in
+            uniforms.sourcePeakNits = newDemuxer.maxPeakNits
+            if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
+                uniforms.colorPrimaries = 1
+            } else if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3 ||
+                      newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65 {
+                uniforms.colorPrimaries = 2
+            } else {
+                uniforms.colorPrimaries = 0 // BT.2020
+            }
+
+            if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2 ||
+               newDemuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma {
+                uniforms.transferFunction = 2 // SDR
+            } else if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
+                uniforms.transferFunction = 1 // HLG
+            } else {
+                uniforms.transferFunction = 0 // PQ
+            }
+
+            uniforms.bitDepth = UInt32(newDemuxer.bitDepth)
+            uniforms.isFullRange = newDemuxer.isFullRange ? 1 : 0
+            if newDemuxer.isDolbyVisionProfile5 {
+                uniforms.colorSpaceMode = 2 // Dolby Vision IPT / ICtCp
+            } else if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
+                uniforms.colorSpaceMode = 1 // BT.709
+            } else {
+                uniforms.colorSpaceMode = 0 // Standard BT.2020 YCbCr
+            }
+        }
         print("[NativePlayerEngine] Loaded successfully. Duration: \(duration)s, peakNits: \(newDemuxer.maxPeakNits), formatDesc: \(String(describing: newDemuxer.formatDescription))")
 
         isFeeding.withLock { $0 = false }

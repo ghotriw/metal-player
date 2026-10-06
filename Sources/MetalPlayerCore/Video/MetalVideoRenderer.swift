@@ -14,6 +14,11 @@ public struct ToneMapUniforms: Sendable {
     public var outputShadowDetail: Float = 0.0
     public var outputShadowLift: Float = 0.0
     public var outputSharpness: Float = 0.5               // Default 0.5 for CAS sharpening on 5K display
+    public var colorPrimaries: UInt32 = 0                 // 0: BT.2020, 1: BT.709, 2: DCI-P3
+    public var transferFunction: UInt32 = 0               // 0: PQ, 1: HLG, 2: BT.709 / SDR
+    public var bitDepth: UInt32 = 10                      // 8 or 10
+    public var isFullRange: UInt32 = 0                    // 0: Video Range, 1: Full Range
+    public var colorSpaceMode: UInt32 = 0                 // 0: Standard YCbCr BT.2020, 1: BT.709, 2: Dolby Vision IPT / ICtCp
 
     public init(
         targetNits: Float = 203.0,
@@ -24,7 +29,12 @@ public struct ToneMapUniforms: Sendable {
         outputHighlightCompression: Float = 0.0,
         outputShadowDetail: Float = 0.0,
         outputShadowLift: Float = 0.0,
-        outputSharpness: Float = 0.5
+        outputSharpness: Float = 0.5,
+        colorPrimaries: UInt32 = 0,
+        transferFunction: UInt32 = 0,
+        bitDepth: UInt32 = 10,
+        isFullRange: UInt32 = 0,
+        colorSpaceMode: UInt32 = 0
     ) {
         self.targetNits = targetNits
         self.sourcePeakNits = sourcePeakNits
@@ -35,6 +45,11 @@ public struct ToneMapUniforms: Sendable {
         self.outputShadowDetail = outputShadowDetail
         self.outputShadowLift = outputShadowLift
         self.outputSharpness = outputSharpness
+        self.colorPrimaries = colorPrimaries
+        self.transferFunction = transferFunction
+        self.bitDepth = bitDepth
+        self.isFullRange = isFullRange
+        self.colorSpaceMode = colorSpaceMode
     }
 }
 
@@ -114,28 +129,37 @@ public final class MetalVideoRenderer: @unchecked Sendable {
         let width = CVPixelBufferGetWidth(pixelBuffer)
         let height = CVPixelBufferGetHeight(pixelBuffer)
 
-        // Plane 0: Y channel (10-bit r16Unorm)
+        let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let is8Bit = (pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
+                      pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+        let isFull = (pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
+                      pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange)
+
+        let yPixelFormat: MTLPixelFormat = is8Bit ? .r8Unorm : .r16Unorm
+        let uvPixelFormat: MTLPixelFormat = is8Bit ? .rg8Unorm : .rg16Unorm
+
+        // Plane 0: Y channel
         var yTextureRef: CVMetalTexture?
         let yStatus = CVMetalTextureCacheCreateTextureFromImage(
             kCFAllocatorDefault,
             textureCache,
             pixelBuffer,
             nil,
-            .r16Unorm,
+            yPixelFormat,
             width,
             height,
             0,
             &yTextureRef
         )
 
-        // Plane 1: UV / CbCr channel (10-bit rg16Unorm, half width & height)
+        // Plane 1: UV / CbCr channel (half width & height)
         var uvTextureRef: CVMetalTexture?
         let uvStatus = CVMetalTextureCacheCreateTextureFromImage(
             kCFAllocatorDefault,
             textureCache,
             pixelBuffer,
             nil,
-            .rg16Unorm,
+            uvPixelFormat,
             width / 2,
             height / 2,
             1,
@@ -164,6 +188,8 @@ public final class MetalVideoRenderer: @unchecked Sendable {
         encoder.setFragmentTexture(uvTexture, index: 1)
 
         var currentUniforms = uniforms
+        currentUniforms.bitDepth = is8Bit ? 8 : 10
+        currentUniforms.isFullRange = isFull ? 1 : 0
         encoder.setFragmentBytes(&currentUniforms, length: MemoryLayout<ToneMapUniforms>.stride, index: 0)
 
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
