@@ -188,18 +188,19 @@ public final class NativePlayerEngine: PlayerEngine {
         displayLayer.stopRequestingMediaData()
         displayLayer.flush()
         let decoder = self.decoder
-        feedQueue.sync {
+        feedQueue.async { [weak self] in
             decoder.flush()
+            guard let self else { return }
+            DispatchQueue.main.async {
+                self.frameQueue.clear()
+                self.startFeeding()
+                self.synchronizer.setRate(1.0, time: .zero)
+                if let displayLink = self.displayLink {
+                    CVDisplayLinkStart(displayLink)
+                }
+                self.isPlaying = true
+            }
         }
-
-        frameQueue.clear()
-
-        startFeeding()
-        synchronizer.setRate(1.0, time: .zero)
-        if let displayLink {
-            CVDisplayLinkStart(displayLink)
-        }
-        isPlaying = true
     }
 
     private func startFeeding() {
@@ -212,9 +213,17 @@ public final class NativePlayerEngine: PlayerEngine {
 
         let sampleCountLock = OSAllocatedUnfairLock(initialState: 0)
         let decoder = self.decoder
+        let queue = self.frameQueue
 
         displayLayer.requestMediaDataWhenReady(on: feedQueue) { [demuxer] in
             while layer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
+                // Backpressure: If Metal tone mapping is active and frameQueue already has >45 decoded frames (~1.8 seconds),
+                // yield feedQueue briefly to let CVDisplayLink drain the queue and prevent buffer exhaustion.
+                if modeLock.withLock({ $0 == .metalToneMap }) && queue.count >= 45 {
+                    Thread.sleep(forTimeInterval: 0.010)
+                    if !feedingLock.withLock({ $0 }) { break }
+                }
+
                 if let sample = demuxer.nextVideoSample() {
                     nonisolated(unsafe) let sampleBuf = sample
                     let count = sampleCountLock.withLock { count -> Int in
@@ -243,6 +252,10 @@ public final class NativePlayerEngine: PlayerEngine {
 
     public func play() {
         guard isLoaded else { return }
+        let feedingActive = isFeeding.withLock { $0 }
+        if !feedingActive {
+            startFeeding()
+        }
         synchronizer.setRate(1.0, time: synchronizer.currentTime())
         if let displayLink {
             CVDisplayLinkStart(displayLink)
@@ -275,31 +288,29 @@ public final class NativePlayerEngine: PlayerEngine {
         isFeeding.withLock { $0 = false }
         displayLayer.stopRequestingMediaData()
         displayLayer.flush()
-
-        let decoder = self.decoder
-        feedQueue.sync {
-            decoder.flush()
-        }
-
         frameQueue.clear()
 
-        demuxer.seek(to: seconds)
+        currentTime = seconds
         let targetTime = CMTime(seconds: seconds, preferredTimescale: 1000)
 
-        if wasPlaying {
-            startFeeding()
-            synchronizer.setRate(1.0, time: targetTime)
-            if let displayLink {
-                CVDisplayLinkStart(displayLink)
-            }
-            isPlaying = true
-        } else {
-            synchronizer.setRate(0.0, time: targetTime)
-            nonisolated(unsafe) let layer = self.displayLayer
-            let decoder = self.decoder
-            // Pump demuxer and decoder for pause seek until target frame is reached
-            feedQueue.async { [weak self, demuxer] in
-                guard let self else { return }
+        let decoder = self.decoder
+        nonisolated(unsafe) let layer = self.displayLayer
+        feedQueue.async { [weak self, demuxer] in
+            decoder.flush()
+            demuxer.seek(to: seconds)
+
+            guard let self else { return }
+
+            if wasPlaying {
+                DispatchQueue.main.async {
+                    self.startFeeding()
+                    self.synchronizer.setRate(1.0, time: targetTime)
+                    if let displayLink = self.displayLink {
+                        CVDisplayLinkStart(displayLink)
+                    }
+                    self.isPlaying = true
+                }
+            } else {
                 var attempts = 0
                 var foundTarget = false
                 while attempts < 120 && !foundTarget {
@@ -315,15 +326,14 @@ public final class NativePlayerEngine: PlayerEngine {
                         break
                     }
                 }
-                // Flush decoder asynchronously so all decoded frames are delivered to frameQueue
                 decoder.flush()
-                Task { @MainActor in
+                DispatchQueue.main.async {
+                    self.synchronizer.setRate(0.0, time: targetTime)
                     self.renderCurrentFrame()
                 }
             }
         }
-        currentTime = seconds
-        print("[NativePlayerEngine] Seek initiated. synchronizer time set to:", targetTime.seconds)
+        print("[NativePlayerEngine] Seek initiated asynchronously to:", targetTime.seconds)
     }
 
     public func seekRelative(by seconds: Double) {
@@ -350,6 +360,7 @@ public final class NativePlayerEngine: PlayerEngine {
         }
         if let displayLink {
             CVDisplayLinkStop(displayLink)
+            CVDisplayLinkSetOutputCallback(displayLink, nil, nil)
         }
         isFeeding.withLock { $0 = false }
         displayLayer.stopRequestingMediaData()

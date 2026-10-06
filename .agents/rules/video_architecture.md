@@ -43,6 +43,22 @@ The codebase is split into three strictly separated layers to prevent UI changes
 - Consumes `PlayerViewModel` via SwiftUI observation.
 - Changing, rewriting, or animating UI components must never impact or require changes to decoding loops, Metal shaders, or A/V sync.
 
+### 2.4. Host Application & Web-Bridge Embeddability (WKWebView / Headless Integration)
+To support embedding into host applications with web-driven frontends (e.g., `WKWebView` / Emby client), the core must strictly satisfy:
+1. **Headless Video Canvas (`NSView` / `CALayer`):**
+   - The engine must provide a standalone video surface view without imposing any native controls or overlays.
+   - Host applications can place a transparent `WKWebView` above or alongside the video surface, rendering all UI controls in HTML/CSS/JS.
+2. **Bidirectional Bridge Contract (Commands IN, Events OUT):**
+   - **Commands IN:** The engine accepts commands via `PlayerEngine` protocol: `open(url:headers:)`, `play()`, `pause()`, `seek(to:)`, `setVolume()`, `setAudioTrack(id:)`, `setSubtitleTrack(id:)`.
+   - **Events OUT:** The engine emits structured, serializable events suitable for JSON bridging to JavaScript (`window.webkit.messageHandlers`):
+     - `timeUpdate(currentTime:duration:buffered:)`
+     - `playbackStateChanged(state:)` (playing, paused, buffering, ended)
+     - `tracksChanged(audio:subtitles:)`
+     - `error(code:message:)`
+3. **Network Streams & HTTP Authorization:**
+   - The demuxing subsystem must not assume local `file://` URLs.
+   - Remote streaming via HTTP/HTTPS, HLS, or direct MKV over HTTP must support custom request headers (e.g. `X-Emby-Token`, `Authorization`, custom User-Agent, cookies) via FFmpeg `AVDictionary` options.
+
 ---
 
 ## 3. Video Pipeline Invariants (DO NOT BREAK)
@@ -57,7 +73,9 @@ The codebase is split into three strictly separated layers to prevent UI changes
   - **HDR ➔ SDR Transition:** The underlying hardware `AVSampleBufferDisplayLayer` must remain continuously visible until the background `VTVideoDecoder` produces its first valid frame matching or exceeding `currentSyncTime`. Only then does `CAMetalLayer` surface over the display layer (`isMetalLayerVisible = true`). This prevents black flickers or frame pauses.
   - **SDR ➔ HDR Transition:** `isMetalLayerVisible` is immediately reset to `false`, revealing the native system HDR overlay with zero latency.
   - **Pipeline Queue Hygiene:** On every render mode handover, `frameQueue.clear()` and asynchronous `decoder.flush()` must be executed to flush stale frames and prevent stutter or packet queue desynchronization.
-  - While on an HDR display, `VTVideoDecoder` must not decode idle frames (`modeLock == .metalToneMap`) to conserve hardware decoder bandwidth and energy.
+  - **Deliberate Idle Decoder Energy Efficiency (Design Choice):**
+    - While on an HDR display, `VTVideoDecoder` must **not** decode idle frames (`modeLock == .metalToneMap`). This guarantees zero redundant CPU/Media Engine power consumption and maximizes battery life on laptops.
+    - As a direct design trade-off, transitioning live playback from HDR to SDR will experience a brief 1–2 second latency before the Metal tone-mapped layer surfaces, during which `AVSampleBufferDisplayLayer` seamlessly continues rendering underneath. **This is an intentional design decision:** a brief 1–2s tone-mapping catch-up during the rare window-move event is strictly preferred over 2 hours of redundant dual decoding during full playback. Never revert this to continuous parallel decoding.
 
 ### 3.2. Metal Tone-Mapping Color Engine (`HDRToneMapping.metal`)
 - **Input Format:** 10-bit P010 biplanar YCbCr (`r16Unorm` Y plane, `rg16Unorm` CbCr plane). Normalization must account for VideoToolbox MSB-alignment: `val * 65535.0 / 1023.0`.

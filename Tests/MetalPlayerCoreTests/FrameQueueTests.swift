@@ -84,4 +84,22 @@ struct FrameQueueTests {
         #expect(queue.count == 0)
         #expect(queue.getLastRenderedBuffer() == nil)
     }
+
+    @Test("Queue overflow preserves imminent head frames and discards furthest future frames")
+    func testQueueOverflowPreservesHeadFrames() {
+        let queue = FrameQueue()
+        var firstBuffer: CVPixelBuffer?
+
+        for i in 1...65 {
+            let buf = createDummyPixelBuffer()
+            if i == 1 { firstBuffer = buf }
+            let pts = CMTime(seconds: Double(i), preferredTimescale: 1000)
+            queue.push(VTVideoDecoder.DecodedFrame(pixelBuffer: buf, pts: pts, duration: CMTime(value: 41, timescale: 1000)))
+        }
+
+        #expect(queue.count == 60)
+        // Earliest frame (PTS 1.0) must still be at the head of the queue!
+        let popped = queue.popFrame(forSyncTime: CMTime(seconds: 1.0, preferredTimescale: 1000))
+        #expect(popped === firstBuffer)
+    }
 }

@@ -117,7 +117,9 @@ public final class VTVideoDecoder: @unchecked Sendable {
     }
 
     deinit {
+        outputHandler = nil
         if let session {
+            VTDecompressionSessionWaitForAsynchronousFrames(session)
             VTDecompressionSessionInvalidate(session)
         }
     }

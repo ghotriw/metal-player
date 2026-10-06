@@ -12,6 +12,10 @@ public final class HEVCDemuxer: @unchecked Sendable {
     public private(set) var width: Int = 0
     public private(set) var height: Int = 0
     public private(set) var maxPeakNits: Float = 1000.0
+    public private(set) var colorPrimaries: CFString = kCVImageBufferColorPrimaries_ITU_R_2020
+    public private(set) var transferFunction: CFString = kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
+    public private(set) var yCbCrMatrix: CFString = kCVImageBufferYCbCrMatrix_ITU_R_2020
+    public private(set) var isFullRange: Bool = false
     private var masteringDisplay: Data?
     private var contentLightLevel: Data?
 
@@ -41,6 +45,68 @@ public final class HEVCDemuxer: @unchecked Sendable {
                 } else if formatCtx.pointee.duration > 0 {
                     self.durationSeconds = Double(formatCtx.pointee.duration) / Double(AV_TIME_BASE)
                 }
+
+                // Dynamically map color primaries
+                if let primaries = CVColorPrimariesGetStringForIntegerCodePoint(Int32(stream.pointee.codecpar.pointee.color_primaries.rawValue)) {
+                    self.colorPrimaries = primaries.takeUnretainedValue()
+                } else {
+                    switch stream.pointee.codecpar.pointee.color_primaries {
+                    case AVCOL_PRI_BT709:
+                        self.colorPrimaries = kCVImageBufferColorPrimaries_ITU_R_709_2
+                    case AVCOL_PRI_BT2020:
+                        self.colorPrimaries = kCVImageBufferColorPrimaries_ITU_R_2020
+                    case AVCOL_PRI_SMPTE431:
+                        self.colorPrimaries = kCVImageBufferColorPrimaries_DCI_P3
+                    case AVCOL_PRI_SMPTE432:
+                        self.colorPrimaries = kCVImageBufferColorPrimaries_P3_D65
+                    default:
+                        self.colorPrimaries = kCVImageBufferColorPrimaries_ITU_R_2020
+                    }
+                }
+
+                // Dynamically map transfer characteristics (TRC)
+                if let trc = CVTransferFunctionGetStringForIntegerCodePoint(Int32(stream.pointee.codecpar.pointee.color_trc.rawValue)) {
+                    self.transferFunction = trc.takeUnretainedValue()
+                } else {
+                    switch stream.pointee.codecpar.pointee.color_trc {
+                    case AVCOL_TRC_BT709, AVCOL_TRC_SMPTE170M, AVCOL_TRC_SMPTE240M:
+                        self.transferFunction = kCVImageBufferTransferFunction_ITU_R_709_2
+                    case AVCOL_TRC_SMPTE2084:
+                        self.transferFunction = kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
+                    case AVCOL_TRC_ARIB_STD_B67:
+                        self.transferFunction = kCVImageBufferTransferFunction_ITU_R_2100_HLG
+                    case AVCOL_TRC_GAMMA22:
+                        self.transferFunction = kCVImageBufferTransferFunction_UseGamma
+                    case AVCOL_TRC_LINEAR:
+                        self.transferFunction = kCVImageBufferTransferFunction_Linear
+                    default:
+                        self.transferFunction = kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
+                    }
+                }
+
+                // Dynamically map YCbCr color matrix / colorspace
+                if let matrix = CVYCbCrMatrixGetStringForIntegerCodePoint(Int32(stream.pointee.codecpar.pointee.color_space.rawValue)) {
+                    self.yCbCrMatrix = matrix.takeUnretainedValue()
+                } else {
+                    switch stream.pointee.codecpar.pointee.color_space {
+                    case AVCOL_SPC_BT709:
+                        self.yCbCrMatrix = kCVImageBufferYCbCrMatrix_ITU_R_709_2
+                    case AVCOL_SPC_BT2020_NCL, AVCOL_SPC_BT2020_CL:
+                        self.yCbCrMatrix = kCVImageBufferYCbCrMatrix_ITU_R_2020
+                    case AVCOL_SPC_SMPTE170M, AVCOL_SPC_SMPTE240M:
+                        self.yCbCrMatrix = kCVImageBufferYCbCrMatrix_SMPTE_240M_1995
+                    default:
+                        self.yCbCrMatrix = kCVImageBufferYCbCrMatrix_ITU_R_2020
+                    }
+                }
+
+                // Range
+                if stream.pointee.codecpar.pointee.color_range == AVCOL_RANGE_JPEG {
+                    self.isFullRange = true
+                } else {
+                    self.isFullRange = false
+                }
+
                 break
             }
         }
@@ -69,12 +135,9 @@ public final class HEVCDemuxer: @unchecked Sendable {
             packetsScanned += 1
             if pkt.stream_index == videoStreamIndex {
                 let data = Data(bytes: pkt.data, count: Int(pkt.size))
-                var offset = 0
-                while offset + 4 <= data.count {
-                    let naluLen = Int(data[offset]) << 24 | Int(data[offset + 1]) << 16 | Int(data[offset + 2]) << 8 | Int(data[offset + 3])
-                    offset += 4
-                    guard naluLen > 0, offset + naluLen <= data.count else { break }
-                    let naluData = data.subdata(in: offset..<(offset + naluLen))
+                let nalus = Self.extractNALUnits(from: data)
+                for naluData in nalus {
+                    guard !naluData.isEmpty else { continue }
                     let nalType = (naluData[0] >> 1) & 0x3F
 
                     if nalType == 32 { vps = naluData }
@@ -139,8 +202,6 @@ public final class HEVCDemuxer: @unchecked Sendable {
                             p += payloadSize
                         }
                     }
-
-                    offset += naluLen
                 }
                 av_packet_unref(&pkt)
                 if vps != nil && sps != nil && pps != nil && (masteringDisplay != nil || packetsScanned > 30) {
@@ -160,10 +221,10 @@ public final class HEVCDemuxer: @unchecked Sendable {
         guard let vpsData = vps, let spsData = sps, let ppsData = pps else { return nil }
 
         var extensionsDict: [String: Any] = [
-            kCVImageBufferColorPrimariesKey as String: kCVImageBufferColorPrimaries_ITU_R_2020 as String,
-            kCVImageBufferTransferFunctionKey as String: kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String,
-            kCVImageBufferYCbCrMatrixKey as String: kCVImageBufferYCbCrMatrix_ITU_R_2020 as String,
-            kCMFormatDescriptionExtension_FullRangeVideo as String: false,
+            kCVImageBufferColorPrimariesKey as String: colorPrimaries as String,
+            kCVImageBufferTransferFunctionKey as String: transferFunction as String,
+            kCVImageBufferYCbCrMatrixKey as String: yCbCrMatrix as String,
+            kCMFormatDescriptionExtension_FullRangeVideo as String: isFullRange,
             kCVImageBufferChromaLocationTopFieldKey as String: kCVImageBufferChromaLocation_Left as String,
             kCVImageBufferChromaLocationBottomFieldKey as String: kCVImageBufferChromaLocation_Left as String
         ]
@@ -216,22 +277,33 @@ public final class HEVCDemuxer: @unchecked Sendable {
         var pkt = AVPacket()
         while av_read_frame(ctx, &pkt) >= 0 {
             if pkt.stream_index == videoStreamIndex {
-                let size = Int(pkt.size)
-                let mem = malloc(size)!
-                memcpy(mem, pkt.data, size)
+                let (hvccData, hvccSize) = Self.packetDataToHVCC(pktData: pkt.data, count: Int(pkt.size))
+                guard hvccSize > 0, let mem = malloc(hvccSize) else {
+                    av_packet_unref(&pkt)
+                    continue
+                }
+                _ = hvccData.withUnsafeBytes { rawBytes in
+                    memcpy(mem, rawBytes.baseAddress!, hvccSize)
+                }
 
                 var blockBuffer: CMBlockBuffer?
-                CMBlockBufferCreateWithMemoryBlock(
+                let blockStatus = CMBlockBufferCreateWithMemoryBlock(
                     allocator: kCFAllocatorDefault,
                     memoryBlock: mem,
-                    blockLength: size,
+                    blockLength: hvccSize,
                     blockAllocator: kCFAllocatorMalloc,
                     customBlockSource: nil,
                     offsetToData: 0,
-                    dataLength: size,
+                    dataLength: hvccSize,
                     flags: 0,
                     blockBufferOut: &blockBuffer
                 )
+
+                if blockStatus != kCMBlockBufferNoErr {
+                    free(mem)
+                    av_packet_unref(&pkt)
+                    continue
+                }
 
                 let noPtsValue = Int64.min
                 let ptsVal = pkt.pts != noPtsValue ? pkt.pts : pkt.dts
@@ -246,7 +318,7 @@ public final class HEVCDemuxer: @unchecked Sendable {
                 )
 
                 var sampleBuffer: CMSampleBuffer?
-                var sampleSize = size
+                var sampleSize = hvccSize
                 let status = CMSampleBufferCreateReady(
                     allocator: kCFAllocatorDefault,
                     dataBuffer: blockBuffer,
@@ -266,10 +338,10 @@ public final class HEVCDemuxer: @unchecked Sendable {
 
                 av_packet_unref(&pkt)
                 if status == noErr, let sb = sampleBuffer {
-                    // Propagate HDR color metadata attachments
-                    CMSetAttachment(sb, key: kCVImageBufferColorPrimariesKey, value: kCVImageBufferColorPrimaries_ITU_R_2020, attachmentMode: kCMAttachmentMode_ShouldPropagate)
-                    CMSetAttachment(sb, key: kCVImageBufferTransferFunctionKey, value: kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ, attachmentMode: kCMAttachmentMode_ShouldPropagate)
-                    CMSetAttachment(sb, key: kCVImageBufferYCbCrMatrixKey, value: kCVImageBufferYCbCrMatrix_ITU_R_2020, attachmentMode: kCMAttachmentMode_ShouldPropagate)
+                    // Propagate HDR / SDR color metadata attachments
+                    CMSetAttachment(sb, key: kCVImageBufferColorPrimariesKey, value: colorPrimaries, attachmentMode: kCMAttachmentMode_ShouldPropagate)
+                    CMSetAttachment(sb, key: kCVImageBufferTransferFunctionKey, value: transferFunction, attachmentMode: kCMAttachmentMode_ShouldPropagate)
+                    CMSetAttachment(sb, key: kCVImageBufferYCbCrMatrixKey, value: yCbCrMatrix, attachmentMode: kCMAttachmentMode_ShouldPropagate)
                     if let masteringDisplay {
                         CMSetAttachment(sb, key: kCVImageBufferMasteringDisplayColorVolumeKey, value: masteringDisplay as CFData, attachmentMode: kCMAttachmentMode_ShouldPropagate)
                     }
@@ -307,5 +379,114 @@ public final class HEVCDemuxer: @unchecked Sendable {
         if formatCtx != nil {
             avformat_close_input(&formatCtx)
         }
+    }
+
+    // MARK: - Annex B / HVCC Utilities
+
+    /// Parses NAL units from either Annex B byte stream (0x000001 or 0x00000001 start codes)
+    /// or MP4/hvcC format (4-byte big endian length prefixed).
+    static func extractNALUnits(from data: Data) -> [Data] {
+        guard data.count >= 4 else { return [] }
+
+        let bytes = [UInt8](data)
+        let count = bytes.count
+
+        // Check if stream begins with an Annex B start code (0x00 0x00 0x01 or 0x00 0x00 0x00 0x01)
+        let isAnnexB = (bytes[0] == 0 && bytes[1] == 0 && (bytes[2] == 1 || (count > 3 && bytes[2] == 0 && bytes[3] == 1)))
+
+        if isAnnexB {
+            var nalus: [Data] = []
+            var starts: [(offset: Int, prefixLen: Int)] = []
+
+            var i = 0
+            while i + 2 < count {
+                if bytes[i] == 0 && bytes[i + 1] == 0 {
+                    if bytes[i + 2] == 1 {
+                        starts.append((offset: i, prefixLen: 3))
+                        i += 3
+                        continue
+                    } else if i + 3 < count && bytes[i + 2] == 0 && bytes[i + 3] == 1 {
+                        starts.append((offset: i, prefixLen: 4))
+                        i += 4
+                        continue
+                    }
+                }
+                i += 1
+            }
+
+            for (idx, start) in starts.enumerated() {
+                let nalStart = start.offset + start.prefixLen
+                let nalEnd = (idx + 1 < starts.count) ? starts[idx + 1].offset : count
+                if nalEnd > nalStart {
+                    nalus.append(data.subdata(in: nalStart..<nalEnd))
+                }
+            }
+            return nalus
+        } else {
+            // Standard MP4 length-prefixed format
+            var nalus: [Data] = []
+            var offset = 0
+            while offset + 4 <= count {
+                let naluLen = Int(bytes[offset]) << 24 | Int(bytes[offset + 1]) << 16 | Int(bytes[offset + 2]) << 8 | Int(bytes[offset + 3])
+                offset += 4
+                guard naluLen > 0, offset + naluLen <= count else { break }
+                nalus.append(data.subdata(in: offset..<(offset + naluLen)))
+                offset += naluLen
+            }
+            return nalus
+        }
+    }
+
+    /// Converts an input packet to HVCC format expected by VideoToolbox (4-byte length prefix).
+    /// If packet is already in length-prefixed format, it returns the raw packet bytes directly.
+    static func packetDataToHVCC(pktData: UnsafePointer<UInt8>?, count: Int) -> (Data, Int) {
+        guard let pktData, count >= 4 else {
+            return (Data(), 0)
+        }
+
+        let isAnnexB = (pktData[0] == 0 && pktData[1] == 0 && (pktData[2] == 1 || (count > 3 && pktData[2] == 0 && pktData[3] == 1)))
+
+        if !isAnnexB {
+            let data = Data(bytes: pktData, count: count)
+            return (data, count)
+        }
+
+        // Convert Annex B to 4-byte length prefix
+        var starts: [(offset: Int, prefixLen: Int)] = []
+        var i = 0
+        while i + 2 < count {
+            if pktData[i] == 0 && pktData[i + 1] == 0 {
+                if pktData[i + 2] == 1 {
+                    starts.append((offset: i, prefixLen: 3))
+                    i += 3
+                    continue
+                } else if i + 3 < count && pktData[i + 2] == 0 && pktData[i + 3] == 1 {
+                    starts.append((offset: i, prefixLen: 4))
+                    i += 4
+                    continue
+                }
+            }
+            i += 1
+        }
+
+        var hvccData = Data()
+        hvccData.reserveCapacity(count + 32)
+
+        for (idx, start) in starts.enumerated() {
+            let nalStart = start.offset + start.prefixLen
+            let nalEnd = (idx + 1 < starts.count) ? starts[idx + 1].offset : count
+            let nalSize = nalEnd - nalStart
+            guard nalSize > 0 else { continue }
+
+            var bigEndianLength = UInt32(nalSize).bigEndian
+            withUnsafeBytes(of: &bigEndianLength) { lenBytes in
+                hvccData.append(contentsOf: lenBytes)
+            }
+            let nalPtr = pktData.advanced(by: nalStart)
+            hvccData.append(nalPtr, count: nalSize)
+        }
+
+        let finalCount = hvccData.count
+        return (hvccData, finalCount)
     }
 }

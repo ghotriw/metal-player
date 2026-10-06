@@ -61,6 +61,7 @@ public final class NativeVideoHostView: NSView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeScreenNotification, object: nil)
         if let window {
             NotificationCenter.default.addObserver(
                 self,
@@ -70,6 +71,10 @@ public final class NativeVideoHostView: NSView {
             )
             updateScreenHDRStatus()
         }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     @objc private func windowDidChangeScreen(_ notification: Notification) {

@@ -10,11 +10,12 @@ let package = Package(
         .library(name: "MetalPlayerUI", targets: ["MetalPlayerUI"])
     ],
     targets: [
-        .target(
+        .systemLibrary(
             name: "CFFmpeg",
-            dependencies: [],
-            cSettings: [
-                .unsafeFlags(["-I/opt/homebrew/include"])
+            pkgConfig: "libavformat libavcodec libavutil",
+            providers: [
+                .brew(["ffmpeg"]),
+                .apt(["libavformat-dev", "libavcodec-dev", "libavutil-dev"])
             ]
         ),
         .target(
@@ -22,39 +23,19 @@ let package = Package(
             dependencies: ["CFFmpeg"],
             resources: [
                 .process("Video/HDRToneMapping.metal")
-            ],
-            swiftSettings: [
-                .unsafeFlags(["-Xcc", "-I/opt/homebrew/include"])
-            ],
-            linkerSettings: [
-                .unsafeFlags([
-                    "-L/opt/homebrew/lib",
-                    "-lavformat",
-                    "-lavcodec",
-                    "-lavutil"
-                ])
             ]
         ),
         .target(
             name: "MetalPlayerUI",
-            dependencies: ["MetalPlayerCore"],
-            swiftSettings: [
-                .unsafeFlags(["-Xcc", "-I/opt/homebrew/include"])
-            ]
+            dependencies: ["MetalPlayerCore"]
         ),
         .executableTarget(
             name: "MetalPlayerApp",
-            dependencies: ["MetalPlayerCore", "MetalPlayerUI"],
-            swiftSettings: [
-                .unsafeFlags(["-Xcc", "-I/opt/homebrew/include"])
-            ]
+            dependencies: ["MetalPlayerCore", "MetalPlayerUI"]
         ),
         .testTarget(
             name: "MetalPlayerCoreTests",
-            dependencies: ["MetalPlayerCore"],
-            swiftSettings: [
-                .unsafeFlags(["-Xcc", "-I/opt/homebrew/include"])
-            ]
+            dependencies: ["MetalPlayerCore"]
         )
     ]
 )

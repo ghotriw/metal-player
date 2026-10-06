@@ -17,13 +17,13 @@ public final class FrameQueue: @unchecked Sendable {
 
     public func push(_ frame: VTVideoDecoder.DecodedFrame) {
         lock.lock()
+        defer { lock.unlock() }
         let idx = frames.firstIndex(where: { $0.pts > frame.pts }) ?? frames.endIndex
         frames.insert(frame, at: idx)
-        // Keep up to 60 frames in buffer
+        // Keep up to 60 frames in buffer without ever discarding imminent head frames
         if frames.count > 60 {
-            frames.removeFirst()
+            frames.removeLast()
         }
-        lock.unlock()
     }
 
     public func popFrame(forSyncTime syncTime: CMTime) -> CVPixelBuffer? {
