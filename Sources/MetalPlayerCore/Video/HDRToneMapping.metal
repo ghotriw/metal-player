@@ -184,9 +184,10 @@ fragment float4 hdrToneMapFragmentShader(
 ) {
     constexpr sampler s(address::clamp_to_edge, filter::linear);
 
+    // Compute reference tone-mapping pipeline exactly once for the center fragment
     float3 center = sampleAndToneMap(in.texCoords, textureY, textureUV, s, uniforms);
 
-    // Apply Contrast Adaptive Sharpening (FidelityFX CAS)
+    // Contrast Adaptive Sharpening (FidelityFX CAS)
     float strength = clamp(uniforms.outputSharpness, 0.0, 1.0);
     if (strength <= 0.0) {
         return float4(center, 1.0);
@@ -194,22 +195,28 @@ fragment float4 hdrToneMapFragmentShader(
 
     float2 texelSize = float2(1.0 / float(textureY.get_width()), 1.0 / float(textureY.get_height()));
 
-    float3 north = sampleAndToneMap(in.texCoords + float2(0.0, -texelSize.y), textureY, textureUV, s, uniforms);
-    float3 south = sampleAndToneMap(in.texCoords + float2(0.0,  texelSize.y), textureY, textureUV, s, uniforms);
-    float3 west  = sampleAndToneMap(in.texCoords + float2(-texelSize.x, 0.0), textureY, textureUV, s, uniforms);
-    float3 east  = sampleAndToneMap(in.texCoords + float2( texelSize.x, 0.0), textureY, textureUV, s, uniforms);
+    // Sample neighbors from single-channel Y texture directly (avoiding 5x redundant BT.2390/PQ math)
+    float y_c = textureY.sample(s, in.texCoords).r;
+    float y_n = textureY.sample(s, in.texCoords + float2(0.0, -texelSize.y)).r;
+    float y_s = textureY.sample(s, in.texCoords + float2(0.0,  texelSize.y)).r;
+    float y_w = textureY.sample(s, in.texCoords + float2(-texelSize.x, 0.0)).r;
+    float y_e = textureY.sample(s, in.texCoords + float2( texelSize.x, 0.0)).r;
 
-    float3 minimum = min(center, min(min(north, south), min(west, east)));
-    float3 maximum = max(center, max(max(north, south), max(west, east)));
+    float y_min = min(y_c, min(min(y_n, y_s), min(y_w, y_e)));
+    float y_max = max(y_c, max(max(y_n, y_s), max(y_w, y_e)));
 
-    // Headroom prevents clipping artifacts near peak whites or deep blacks
-    float3 headroom = min(minimum, 1.0 - maximum);
-    float3 amplitude = sqrt(clamp(headroom / max(maximum, float3(1.0e-4)), 0.0, 1.0));
+    // Headroom prevents ringing/clipping artifacts near highlight peaks or black floor
+    float headroom = min(y_min, 1.0 - y_max);
+    float amplitude = sqrt(clamp(headroom / max(y_max, 1.0e-4), 0.0, 1.0));
     // FidelityFX CAS peak formulation: weight stays strictly in [-0.2, 0.0], ensuring (1 + 4*weight) >= 0.2
     float peak = -1.0 / mix(8.0, 5.0, strength);
-    float3 weight = amplitude * peak;
+    float weight = amplitude * peak;
 
-    float3 filtered = (center + (north + south + west + east) * weight) / (1.0 + 4.0 * weight);
+    // High-frequency laplacian luma delta
+    float laplacianY = (y_n + y_s + y_w + y_e) - 4.0 * y_c;
+    // Scale delta back to display dynamic range and apply contrast enhancement to RGB
+    float filterScale = weight / (1.0 + 4.0 * abs(weight));
+    float3 sharpened = center + filterScale * laplacianY;
 
-    return float4(clamp(filtered, 0.0, 1.0), 1.0);
+    return float4(clamp(sharpened, 0.0, 1.0), 1.0);
 }
