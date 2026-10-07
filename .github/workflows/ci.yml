@@ -11,7 +11,7 @@ on:
 jobs:
   verify:
     name: Lint, Typecheck, Test & Package
-    runs-on: macos-15
+    runs-on: macos-26
 
     steps:
       - name: Checkout repository
