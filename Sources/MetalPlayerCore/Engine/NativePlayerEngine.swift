@@ -1,10 +1,13 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import AppKit
+import CFFmpeg
 import CoreMedia
 import Foundation
 import Observation
 import QuartzCore
 import os
+
+extension CMSampleBuffer: @retroactive @unchecked Sendable {}
 
 @Observable
 @MainActor
@@ -88,6 +91,11 @@ public final class NativePlayerEngine: PlayerEngine {
     public let displayLayer = AVSampleBufferDisplayLayer()
     public let metalRenderer = MetalVideoRenderer()
     public let audioRenderer = AVSampleBufferAudioRenderer()
+    public let videoReceiver: AVSampleBufferVideoRenderer.Receiver
+    public let audioReceiver: AVSampleBufferAudioRenderer.Receiver
+    private var videoFeedingTask: Task<Void, Never>?
+    private var audioFeedingTask: Task<Void, Never>?
+
     private let decoder = VTVideoDecoder()
     private var audioDecoder: FFAudioDecoder?
     private let synchronizer = AVSampleBufferRenderSynchronizer()
@@ -112,7 +120,7 @@ public final class NativePlayerEngine: PlayerEngine {
     }
     public var currentMetrics: PlayerPerformanceMonitor.Metrics = PlayerPerformanceMonitor.Metrics()
     public let performanceMonitor = PlayerPerformanceMonitor.shared
-    private var metricsTimer: DispatchSourceTimer?
+    private var metricsTimer: (any DispatchSourceTimer)?
 
     private let frameQueue = FrameQueue()
     private var displayLink: CADisplayLink?
@@ -146,8 +154,8 @@ public final class NativePlayerEngine: PlayerEngine {
         metalRenderer?.uniforms.outputSharpness = configuration.sharpness
         audioRenderer.volume = configuration.initialVolume
 
-        synchronizer.addRenderer(displayLayer)
-        synchronizer.addRenderer(audioRenderer)
+        self.videoReceiver = synchronizer.sampleBufferReceiver(adding: displayLayer.sampleBufferRenderer)
+        self.audioReceiver = synchronizer.sampleBufferReceiver(adding: audioRenderer)
         audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
         displayLayer.videoGravity = .resizeAspect
 
@@ -174,39 +182,18 @@ public final class NativePlayerEngine: PlayerEngine {
     }
 
     private func setupAudioObservers() {
-        // When Spatial Audio mode changes (Off/Fixed/Head Tracked) or the audio route changes,
-        // CoreAudio posts AVSampleBufferAudioRendererOutputConfigurationDidChangeNotification.
-        // As documented by Apple, flushing the renderer and re-enqueuing from the current playhead
-        // acknowledges the change and allows the DSP graph to reconfigure without stalling.
-        audioConfigObserver = NotificationCenter.default.addObserver(
-            forName: .AVSampleBufferAudioRendererOutputConfigurationDidChange,
-            object: audioRenderer,
-            queue: nil
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.handleAudioConfigurationChange()
-        }
-
-        audioAutoFlushObserver = NotificationCenter.default.addObserver(
-            forName: .AVSampleBufferAudioRendererWasFlushedAutomatically,
-            object: audioRenderer,
-            queue: nil
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.handleAudioConfigurationChange()
-        }
+        // macOS 27.0+: Spatial Audio reconfiguration and route changes are signaled
+        // via AVSampleBufferAudioRenderer.Receiver enqueue(_:) result (.enqueuedWithSuggestedFlush),
+        // which automatically triggers flush and reload where needed.
     }
 
     private func handleAudioConfigurationChange() {
         guard isPlaying else { return }
         print(
-            "[NativePlayerEngine] Audio configuration changed / flushed by system (Spatial Audio toggle or route change)"
+            "[NativePlayerEngine] Audio configuration changed (Spatial Audio toggle or route change)"
         )
-        audioFeedQueue.async { [weak self] in
-            guard let self else { return }
-            self.audioRenderer.flush()
-            self.audioDecoder?.flush()
-        }
+        audioReceiver.flush()
+        audioDecoder?.flush()
     }
 
     private func setupMetricsMonitoring() {
@@ -214,13 +201,7 @@ public final class NativePlayerEngine: PlayerEngine {
         timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
         timer.setEventHandler { [weak self] in
             guard let self, self.showDebugHUD else { return }
-            let statusDesc: String = {
-                switch self.displayLayer.sampleBufferRenderer.status {
-                case .rendering: return "Rendering"
-                case .failed: return "Failed"
-                default: return "Waiting"
-                }
-            }()
+            let statusDesc = self.isPlaying ? "Rendering" : "Paused"
             self.performanceMonitor.updateNativeLayerStatus(statusDesc)
 
             // Gather Mach kernel metrics on a low-priority utility queue to keep Main Thread 100% free
@@ -292,9 +273,9 @@ public final class NativePlayerEngine: PlayerEngine {
             let decoder = self.decoder
             let feedingActive = isFeeding.withLock { $0 }
             if isPlaying || feedingActive {
-                // If currently playing, stop video feeding, flush displayLayer, and restart feeding for system mode
-                displayLayer.sampleBufferRenderer.stopRequestingMediaData()
-                displayLayer.sampleBufferRenderer.flush()
+                // If currently playing, stop video feeding, flush receiver, and restart feeding for system mode
+                stopFeedingVideo()
+                videoReceiver.flush()
                 isVideoDrainPaused.withLock { $0 = false }
                 let demuxer = self.demuxer
                 feedQueue.async { [weak self] in
@@ -321,8 +302,8 @@ public final class NativePlayerEngine: PlayerEngine {
             frameQueue.clear()
             let feedingActive = isFeeding.withLock { $0 }
             if isPlaying || feedingActive {
-                displayLayer.sampleBufferRenderer.stopRequestingMediaData()
-                displayLayer.sampleBufferRenderer.flush()
+                stopFeedingVideo()
+                videoReceiver.flush()
                 isVideoDrainPaused.withLock { $0 = false }
                 let demuxer = self.demuxer
                 let decoder = self.decoder
@@ -487,10 +468,10 @@ public final class NativePlayerEngine: PlayerEngine {
         }
 
         isFeeding.withLock { $0 = false }
-        displayLayer.sampleBufferRenderer.stopRequestingMediaData()
-        displayLayer.sampleBufferRenderer.flush()
-        audioRenderer.stopRequestingMediaData()
-        audioRenderer.flush()
+        stopFeedingVideo()
+        stopFeedingAudio()
+        videoReceiver.flush()
+        audioReceiver.flush()
         audioDecoder?.flush()
 
         let decoder = self.decoder
@@ -523,6 +504,16 @@ public final class NativePlayerEngine: PlayerEngine {
         }
     }
 
+    private func stopFeedingVideo() {
+        videoFeedingTask?.cancel()
+        videoFeedingTask = nil
+    }
+
+    private func stopFeedingAudio() {
+        audioFeedingTask?.cancel()
+        audioFeedingTask = nil
+    }
+
     private func startFeeding() {
         guard self.demuxer != nil else { return }
         isFeeding.withLock { $0 = true }
@@ -534,94 +525,130 @@ public final class NativePlayerEngine: PlayerEngine {
 
     private func startFeedingVideo() {
         guard let demuxer = self.demuxer else { return }
+        stopFeedingVideo()
+
         let feedingLock = self.isFeeding
         let drainPausedLock = self.isVideoDrainPaused
         let modeLock = self.activeRenderModeLock
-        nonisolated(unsafe) let renderer = self.displayLayer.sampleBufferRenderer
-
-        let sampleCountLock = OSAllocatedUnfairLock(initialState: 0)
+        let receiver = self.videoReceiver
         let decoder = self.decoder
         let queue = self.frameQueue
 
-        // Video feed loop
-        renderer.requestMediaDataWhenReady(on: feedQueue) { [demuxer, queue] in
-            while renderer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
-                // Cooperative backpressure: If Metal tone mapping is active and frameQueue already has >=40 decoded frames (~1.6 seconds),
-                // stop requesting media data from AVFoundation cleanly.
-                // Do NOT break while isReadyForMoreMediaData is true, as AVFoundation will immediately re-invoke this block in a 100% CPU spin-loop!
-                if modeLock.withLock({ $0 == .metalToneMap }) && queue.count >= 40 {
-                    drainPausedLock.withLock { $0 = true }
-                    renderer.stopRequestingMediaData()
-                    break
-                }
+        videoFeedingTask = Task {
+            await Self.runVideoFeeding(
+                demuxer: demuxer,
+                decoder: decoder,
+                queue: queue,
+                receiver: receiver,
+                feedingLock: feedingLock,
+                drainPausedLock: drainPausedLock,
+                modeLock: modeLock
+            )
+        }
+    }
 
-                if let sample = demuxer.nextVideoSample() {
-                    nonisolated(unsafe) let sampleBuf = sample
-                    let count = sampleCountLock.withLock { count -> Int in
-                        count += 1
-                        return count
-                    }
-                    if count <= 5 || count % 200 == 0 {
-                        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuf)
-                        print(
-                            "[NativePlayerEngine] Enqueued sample #\(count), pts: \(CMTimeGetSeconds(pts))s, layer.status: \(renderer.status.rawValue)"
-                        )
-                    }
-
-                    if modeLock.withLock({ $0 == .metalToneMap }) {
-                        // Decode via VTVideoDecoder for Metal tone-mapping.
-                        // Do NOT call renderer.enqueue(sampleBuf)! AVSampleBufferDisplayLayer decodes frames even when hidden,
-                        // which causes 4K double-decoding and wastes 50-70% CPU.
-                        let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
-                        let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
-                            "EnqueueDecodeFrame", id: signpostID)
-                        decoder.decode(sampleBuffer: sampleBuf)
-                        PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueDecodeFrame", interval)
-                    } else {
-                        // Native mode: Feed renderer directly
-                        let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
-                        let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
-                            "EnqueueNativeSample", id: signpostID)
-                        renderer.enqueue(sampleBuf)
-                        PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueNativeSample", interval)
-                        PlayerPerformanceMonitor.shared.recordNativeEnqueuedSample()
-                    }
-                } else {
-                    print("[NativePlayerEngine] Demuxer returned nil.")
-                    break
+    private nonisolated static func runVideoFeeding(
+        demuxer: MediaDemuxer,
+        decoder: VTVideoDecoder,
+        queue: FrameQueue,
+        receiver: AVSampleBufferVideoRenderer.Receiver,
+        feedingLock: OSAllocatedUnfairLock<Bool>,
+        drainPausedLock: OSAllocatedUnfairLock<Bool>,
+        modeLock: OSAllocatedUnfairLock<RenderMode>
+    ) async {
+        let sampleCountLock = OSAllocatedUnfairLock(initialState: 0)
+        while !Task.isCancelled && feedingLock.withLock({ $0 }) {
+            // Cooperative backpressure for Metal mode
+            if modeLock.withLock({ $0 == .metalToneMap }) && queue.count >= 40 {
+                drainPausedLock.withLock { $0 = true }
+                // Suspend cooperative task until queue drains to <= 25 frames
+                while !Task.isCancelled && queue.count > 25 && feedingLock.withLock({ $0 }) {
+                    try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
                 }
+                drainPausedLock.withLock { $0 = false }
+                if Task.isCancelled || !feedingLock.withLock({ $0 }) { break }
+            }
+
+            guard let sample = demuxer.nextVideoSample() else {
+                print("[NativePlayerEngine] Demuxer returned nil for video.")
+                break
+            }
+
+            let count = sampleCountLock.withLock { count -> Int in
+                count += 1
+                return count
+            }
+            if count <= 5 || count % 200 == 0 {
+                let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+                print(
+                    "[NativePlayerEngine] Enqueued video sample #\(count), pts: \(CMTimeGetSeconds(pts))s"
+                )
+            }
+
+            if modeLock.withLock({ $0 == .metalToneMap }) {
+                let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
+                let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
+                    "EnqueueDecodeFrame", id: signpostID)
+                decoder.decode(sampleBuffer: sample)
+                PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueDecodeFrame", interval)
+            } else {
+                let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
+                let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
+                    "EnqueueNativeSample", id: signpostID)
+                let readySample = CMReadySampleBuffer(unsafeBuffer: sample)
+                _ = try? await receiver.enqueue(readySample)
+                PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueNativeSample", interval)
+                PlayerPerformanceMonitor.shared.recordNativeEnqueuedSample()
             }
         }
     }
 
     private func startFeedingAudio() {
-        guard let demuxer = self.demuxer else { return }
-        let feedingLock = self.isFeeding
-        nonisolated(unsafe) let aRenderer = self.audioRenderer
+        guard let demuxer = self.demuxer, let aDecoder = self.audioDecoder else { return }
+        stopFeedingAudio()
 
-        // Audio feed loop
-        // Let AVSampleBufferAudioRenderer manage its internal buffer backpressure via isReadyForMoreMediaData.
-        // Artificial early breaking when isReadyForMoreMediaData is true causes AVFoundation to immediately
-        // re-invoke this block in a 100% CPU busy-spin loop.
-        if let aDecoder = self.audioDecoder {
-            let audioTimebase = demuxer.audioTimebase
-            audioRenderer.requestMediaDataWhenReady(on: audioFeedQueue) { [demuxer, aDecoder] in
-                while aRenderer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
-                    if let packet = demuxer.nextAudioPacket() {
-                        let pcmBuffers = aDecoder.decode(
-                            packetData: packet.data,
-                            pts: packet.pts,
-                            timebase: audioTimebase
-                        )
-                        for buf in pcmBuffers {
-                            aRenderer.enqueue(buf)
-                        }
-                    } else {
-                        break
-                    }
-                }
+        let feedingLock = self.isFeeding
+        let receiver = self.audioReceiver
+        let audioTimebase = demuxer.audioTimebase
+
+        audioFeedingTask = Task {
+            await Self.runAudioFeeding(
+                demuxer: demuxer,
+                audioDecoder: aDecoder,
+                receiver: receiver,
+                feedingLock: feedingLock,
+                audioTimebase: audioTimebase
+            )
+        }
+    }
+
+    private nonisolated static func runAudioFeeding(
+        demuxer: MediaDemuxer,
+        audioDecoder: FFAudioDecoder,
+        receiver: AVSampleBufferAudioRenderer.Receiver,
+        feedingLock: OSAllocatedUnfairLock<Bool>,
+        audioTimebase: AVRational
+    ) async {
+        while !Task.isCancelled && feedingLock.withLock({ $0 }) {
+            guard let packet = demuxer.nextAudioPacket() else { break }
+            let pcmBuffers = audioDecoder.decode(
+                packetData: packet.data,
+                pts: packet.pts,
+                timebase: audioTimebase
+            )
+            for buf in pcmBuffers {
+                if Task.isCancelled || !feedingLock.withLock({ $0 }) { break }
+                await enqueueAudioSample(buf, to: receiver)
             }
         }
+    }
+
+    private nonisolated static func enqueueAudioSample(
+        _ sample: CMSampleBuffer,
+        to receiver: AVSampleBufferAudioRenderer.Receiver
+    ) async {
+        let ready: CMReadySampleBuffer<CMSampleBuffer.DynamicContent> = CMReadySampleBuffer(unsafeBuffer: sample)
+        _ = try? await receiver.enqueue(ready)
     }
 
     public func selectAudioTrack(id: Int) {
@@ -631,8 +658,8 @@ public final class NativePlayerEngine: PlayerEngine {
         pause()
 
         // Stop requesting data and flush renderers
-        audioRenderer.stopRequestingMediaData()
-        audioRenderer.flush()
+        stopFeedingAudio()
+        audioReceiver.flush()
         audioDecoder?.flush()
 
         demuxer.selectAudioTrack(trackId: id)
@@ -666,8 +693,8 @@ public final class NativePlayerEngine: PlayerEngine {
         synchronizer.setRate(0.0, time: synchronizer.currentTime())
         displayLink?.isPaused = true
         isFeeding.withLock { $0 = false }
-        displayLayer.sampleBufferRenderer.stopRequestingMediaData()
-        audioRenderer.stopRequestingMediaData()
+        stopFeedingVideo()
+        stopFeedingAudio()
         isPlaying = false
         performanceMonitor.handlePlaybackStateChange(isPlaying: false)
     }
@@ -687,10 +714,10 @@ public final class NativePlayerEngine: PlayerEngine {
         pause()
 
         isFeeding.withLock { $0 = false }
-        displayLayer.sampleBufferRenderer.stopRequestingMediaData()
-        displayLayer.sampleBufferRenderer.flush()
-        audioRenderer.stopRequestingMediaData()
-        audioRenderer.flush()
+        stopFeedingVideo()
+        stopFeedingAudio()
+        videoReceiver.flush()
+        audioReceiver.flush()
         audioDecoder?.flush()
         frameQueue.clear(resetDroppedFrames: true)
 
@@ -698,48 +725,61 @@ public final class NativePlayerEngine: PlayerEngine {
         let targetTime = CMTime(seconds: seconds, preferredTimescale: 1000)
 
         let decoder = self.decoder
-        nonisolated(unsafe) let renderer = self.displayLayer.sampleBufferRenderer
-        feedQueue.async { [weak self, demuxer] in
+        let receiver = self.videoReceiver
+        let modeLock = self.activeRenderModeLock
+
+        Task {
             decoder.flush()
             demuxer.seek(to: seconds)
 
-            guard let self else { return }
-
             if wasPlaying {
-                DispatchQueue.main.async {
-                    self.startFeeding()
-                    self.synchronizer.setRate(1.0, time: targetTime)
-                    self.displayLink?.isPaused = false
-                    self.isPlaying = true
-                }
+                self.startFeeding()
+                self.synchronizer.setRate(1.0, time: targetTime)
+                self.displayLink?.isPaused = false
+                self.isPlaying = true
             } else {
-                let isMetalMode = self.activeRenderModeLock.withLock { $0 == .metalToneMap }
-                var attempts = 0
-                var foundTarget = false
-                while attempts < 120 && !foundTarget {
-                    if let sample = demuxer.nextVideoSample() {
-                        let pts = CMSampleBufferGetPresentationTimeStamp(sample)
-                        if isMetalMode {
-                            decoder.decode(sampleBuffer: sample)
-                        } else {
-                            renderer.enqueue(sample)
-                        }
-                        attempts += 1
-                        if CMTimeGetSeconds(pts) >= seconds {
-                            foundTarget = true
-                        }
-                    } else {
-                        break
-                    }
-                }
-                decoder.flush()
-                DispatchQueue.main.async {
-                    self.synchronizer.setRate(0.0, time: targetTime)
-                    self.renderCurrentFrame()
-                }
+                Self.seekPreview(
+                    demuxer: demuxer,
+                    decoder: decoder,
+                    receiver: receiver,
+                    modeLock: modeLock,
+                    seconds: seconds
+                )
+                self.synchronizer.setRate(0.0, time: targetTime)
+                self.renderCurrentFrame()
             }
         }
         print("[NativePlayerEngine] Seek initiated asynchronously to:", targetTime.seconds)
+    }
+
+    private nonisolated static func seekPreview(
+        demuxer: MediaDemuxer,
+        decoder: VTVideoDecoder,
+        receiver: AVSampleBufferVideoRenderer.Receiver,
+        modeLock: OSAllocatedUnfairLock<RenderMode>,
+        seconds: Double
+    ) {
+        let isMetalMode = modeLock.withLock { $0 == .metalToneMap }
+        var attempts = 0
+        var foundTarget = false
+        while attempts < 120 && !foundTarget {
+            if let sample = demuxer.nextVideoSample() {
+                let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+                if isMetalMode {
+                    decoder.decode(sampleBuffer: sample)
+                } else {
+                    let readySample = CMReadySampleBuffer(unsafeBuffer: sample)
+                    _ = receiver.enqueueImmediately(readySample)
+                }
+                attempts += 1
+                if CMTimeGetSeconds(pts) >= seconds {
+                    foundTarget = true
+                }
+            } else {
+                break
+            }
+        }
+        decoder.flush()
     }
 
     public func seekRelative(by seconds: Double) {
@@ -775,7 +815,7 @@ public final class NativePlayerEngine: PlayerEngine {
         metricsTimer?.cancel()
         metricsTimer = nil
         isFeeding.withLock { $0 = false }
-        displayLayer.sampleBufferRenderer.stopRequestingMediaData()
-        audioRenderer.stopRequestingMediaData()
+        stopFeedingVideo()
+        stopFeedingAudio()
     }
 }
