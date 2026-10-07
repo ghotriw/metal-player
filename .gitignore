@@ -23,7 +23,6 @@ DerivedData/
 
 # Temporary & Local files
 /tmp/
-/docs/
 *.log
 
 # IDEs

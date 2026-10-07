@@ -1,6 +1,11 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
+let defaultSwiftSettings: [SwiftSetting] = [
+    .enableUpcomingFeature("StrictConcurrency"),
+    .enableUpcomingFeature("ExistentialAny")
+]
+
 let package = Package(
     name: "MetalPlayer",
     platforms: [.macOS("27.0")],
@@ -23,19 +28,23 @@ let package = Package(
             dependencies: ["CFFmpeg"],
             resources: [
                 .process("Video/HDRToneMapping.metal")
-            ]
+            ],
+            swiftSettings: defaultSwiftSettings
         ),
         .target(
             name: "MetalPlayerUI",
-            dependencies: ["MetalPlayerCore"]
+            dependencies: ["MetalPlayerCore"],
+            swiftSettings: defaultSwiftSettings
         ),
         .executableTarget(
             name: "MetalPlayerApp",
-            dependencies: ["MetalPlayerCore", "MetalPlayerUI"]
+            dependencies: ["MetalPlayerCore", "MetalPlayerUI"],
+            swiftSettings: defaultSwiftSettings
         ),
         .testTarget(
             name: "MetalPlayerCoreTests",
-            dependencies: ["MetalPlayerCore"]
+            dependencies: ["MetalPlayerCore"],
+            swiftSettings: defaultSwiftSettings
         )
     ]
 )

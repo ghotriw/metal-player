@@ -26,13 +26,25 @@ case "$MODE" in
         "$SWIFT_FORMAT_BIN" format --in-place --recursive "${VALID_TARGETS[@]}"
         echo "Done formatting."
         ;;
-    lint|--lint|-l|check|--check)
+    lint|--lint|-l)
         echo "Checking Swift code style..."
         "$SWIFT_FORMAT_BIN" lint --recursive --strict "${VALID_TARGETS[@]}"
         echo "Lint check passed."
         ;;
+    typecheck|--typecheck|-t)
+        echo "Type-checking and building Swift targets..."
+        swift build --build-tests
+        echo "Type-check passed."
+        ;;
+    check|--check|-c)
+        echo "1. Checking Swift code style..."
+        "$SWIFT_FORMAT_BIN" lint --recursive --strict "${VALID_TARGETS[@]}"
+        echo "2. Type-checking and building targets..."
+        swift build --build-tests
+        echo "All checks passed!"
+        ;;
     *)
-        echo "Usage: $0 [format|lint]"
+        echo "Usage: $0 [format|lint|typecheck|check]"
         exit 1
         ;;
 esac
