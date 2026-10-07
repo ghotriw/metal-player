@@ -9,53 +9,103 @@ public struct ControlsOverlay: View {
 
     @State private var isDragging: Bool = false
     @State private var dragPosition: Double = 0
-    @State private var jumpTimeText: String = ""
-    @FocusState private var isFieldFocused: Bool
+    @State private var isBottomHovered: Bool = false
+    @State private var isTopHovered: Bool = false
 
     public var body: some View {
         VStack {
-            // Top Header Bar
-            HStack(spacing: 12) {
+            // Top Header Bar: File title in line with traffic lights
+            HStack(spacing: 8) {
                 if !engine.mediaTitle.isEmpty {
                     Text(engine.mediaTitle)
-                        .font(.headline)
-                        .foregroundStyle(.white)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
                         .lineLimit(1)
-                        .shadow(radius: 4)
+                        .truncationMode(.middle)
                 }
 
                 Spacer()
-
-                // Render Mode Switcher
-                Picker("Render Mode", selection: $engine.renderMode) {
-                    ForEach(RenderMode.allCases) { mode in
-                        if mode == .auto {
-                            Text("Auto (\(engine.activeRenderMode == .system ? "Apple HDR" : "Metal SDR"))").tag(mode)
-                        } else {
-                            Text(mode.rawValue).tag(mode)
-                        }
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 480)
-
-                Button {
-                    onOpenFile()
-                } label: {
-                    Label("Open File", systemImage: "folder")
-                        .font(.subheadline)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.white.opacity(0.2))
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
+            .frame(height: 40)
+            // 78pt leading padding clears the three traffic lights (close, minimize, zoom)
+            .padding(.leading, 78)
+            .padding(.trailing, 20)
+            .background(
+                NativeVisualEffectView(material: .titlebar, blendingMode: .withinWindow)
+            )
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(Color(NSColor.separatorColor))
+                    .frame(height: 1)
+            }
+            .onHover { hovering in
+                isTopHovered = hovering
+                updateInteractionState()
+            }
 
             Spacer()
 
-            // Bottom Player Control Panel
-            VStack(spacing: 10) {
-                // Seek Bar Slider
+            // Bottom Player Control Panel (Single row)
+            HStack(spacing: 14) {
+                // Step frame backward
+                Button {
+                    engine.stepFrameBackward()
+                } label: {
+                    Image(systemName: "backward.frame.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                .buttonStyle(.plain)
+                .help("Previous frame (1/24s)")
+
+                // Seek 10s backward
+                Button {
+                    engine.seekRelative(by: -10)
+                } label: {
+                    Image(systemName: "gobackward.10")
+                        .font(.system(size: 17))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                .buttonStyle(.plain)
+
+                // Play / Pause
+                Button {
+                    engine.togglePlayPause()
+                } label: {
+                    Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 21))
+                        .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+
+                // Seek 10s forward
+                Button {
+                    engine.seekRelative(by: 10)
+                } label: {
+                    Image(systemName: "goforward.10")
+                        .font(.system(size: 17))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                .buttonStyle(.plain)
+
+                // Step frame forward
+                Button {
+                    engine.stepFrameForward()
+                } label: {
+                    Image(systemName: "forward.frame.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.white.opacity(0.85))
+                }
+                .buttonStyle(.plain)
+                .help("Next frame (1/24s)")
+
+                // Current time
+                Text(formatTime(isDragging ? dragPosition : engine.currentTime))
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .frame(minWidth: 48, alignment: .trailing)
+
+                // Progress Bar
                 GeometryReader { geo in
                     let total = max(engine.duration, 1)
                     let current = isDragging ? dragPosition : engine.currentTime
@@ -64,18 +114,18 @@ public struct ControlsOverlay: View {
                     ZStack(alignment: .leading) {
                         Capsule()
                             .fill(.white.opacity(0.25))
-                            .frame(height: 5)
+                            .frame(height: 6)
 
                         Capsule()
                             .fill(.tint)
-                            .frame(width: geo.size.width * progress, height: 5)
+                            .frame(width: geo.size.width * progress, height: 6)
 
                         Circle()
                             .fill(.white)
-                            .frame(width: 13, height: 13)
-                            .offset(x: max(0, min(geo.size.width * progress - 6.5, geo.size.width - 13)))
+                            .frame(width: 14, height: 14)
+                            .offset(x: max(0, min(geo.size.width * progress - 7, geo.size.width - 14)))
                     }
-                    .frame(height: 16)
+                    .frame(height: 18)
                     .contentShape(Rectangle())
                     .gesture(
                         DragGesture(minimumDistance: 0)
@@ -92,171 +142,97 @@ public struct ControlsOverlay: View {
                             }
                     )
                 }
-                .frame(height: 16)
+                .frame(height: 18)
 
-                // Bottom row: Time, Controls
-                HStack(spacing: 16) {
-                    // Play/Pause
-                    Button {
-                        engine.togglePlayPause()
-                    } label: {
-                        Image(systemName: engine.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.title2)
-                            .foregroundStyle(.white)
-                    }
-                    .buttonStyle(.plain)
+                // Total duration
+                Text(formatTime(engine.duration))
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.75))
+                    .frame(minWidth: 48, alignment: .leading)
 
-                    // Step frame backward
+                // Volume Control
+                HStack(spacing: 6) {
                     Button {
-                        engine.stepFrameBackward()
+                        engine.isMuted.toggle()
                     } label: {
-                        Image(systemName: "backward.frame.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.85))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Previous frame (1/24s)")
-
-                    // Seek 10s backward
-                    Button {
-                        engine.seekRelative(by: -10)
-                    } label: {
-                        Image(systemName: "gobackward.10")
-                            .font(.title3)
+                        Image(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : (engine.volume < 0.5 ? "speaker.wave.1.fill" : "speaker.wave.2.fill"))
+                            .font(.system(size: 14))
                             .foregroundStyle(.white.opacity(0.85))
                     }
                     .buttonStyle(.plain)
 
+                    Slider(value: $engine.volume, in: 0.0...1.0)
+                        .frame(width: 75)
+                }
+
+                // Audio Track Selector
+                if !engine.audioTracks.isEmpty {
                     Button {
-                        engine.seekRelative(by: 10)
+                        showAudioTrackMenu()
                     } label: {
-                        Image(systemName: "goforward.10")
-                            .font(.title3)
+                        Image(systemName: "waveform.circle")
+                            .font(.system(size: 19))
                             .foregroundStyle(.white.opacity(0.85))
                     }
                     .buttonStyle(.plain)
+                    .help("Select Audio Track")
+                }
 
-                    // Step frame forward
-                    Button {
-                        engine.stepFrameForward()
-                    } label: {
-                        Image(systemName: "forward.frame.fill")
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.85))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Next frame (1/24s)")
-
-                    // Time display & Exact jump input
-                    Text("\(formatTime(isDragging ? dragPosition : engine.currentTime)) / \(formatTime(engine.duration))")
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.8))
-
-                    // Exact time jump
-                    HStack(spacing: 6) {
-                        TextField("00:00", text: $jumpTimeText)
-                            .focused($isFieldFocused)
-                            .textFieldStyle(.plain)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.white)
-                            .frame(width: 58)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Color.white.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
-                            .onSubmit {
-                                performJump()
-                            }
-                            .onChange(of: isFieldFocused) { _, focused in
-                                isInteracting = focused
-                            }
-                            .onChange(of: jumpTimeText) { _, text in
-                                if !text.isEmpty {
-                                    isInteracting = true
-                                }
-                            }
-
-                        Button("Jump") {
-                            performJump()
+                // Render Mode (HDR / SDR) Dropdown Button
+                Menu {
+                    ForEach(RenderMode.allCases) { mode in
+                        Button {
+                            engine.renderMode = mode
+                        } label: {
+                            let title = (mode == .auto) ? "Auto (\(engine.activeRenderMode == .system ? "Apple HDR" : "Metal SDR"))" : mode.rawValue
+                            let isSelected = (engine.renderMode == mode)
+                            Text("\(isSelected ? "✓ " : "    ")\(title)")
                         }
-                        .font(.caption)
-                        .buttonStyle(.bordered)
-                        .tint(.white.opacity(0.3))
                     }
 
                     if engine.activeRenderMode == .metalToneMap {
-                        HStack(spacing: 6) {
-                            Text("Sharpness:")
-                                .font(.caption2)
-                                .foregroundStyle(.white.opacity(0.75))
-                            Slider(value: $engine.metalSharpness, in: 0.0...1.0, step: 0.05)
-                                .frame(width: 90)
-                            Text(String(format: "%.1f", engine.metalSharpness))
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.85))
+                        Divider()
+                        Menu("Sharpness: \(String(format: "%.1f", engine.metalSharpness))") {
+                            Button("0.0 (Off)") { engine.metalSharpness = 0.0 }
+                            Button("0.3 (Soft)") { engine.metalSharpness = 0.3 }
+                            Button("0.5 (Default)") { engine.metalSharpness = 0.5 }
+                            Button("0.7 (Crisp)") { engine.metalSharpness = 0.7 }
+                            Button("1.0 (Maximum)") { engine.metalSharpness = 1.0 }
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
                     }
-
-                    Spacer()
-
-                    // Audio Track Selector (if media has multiple audio tracks)
-                    if !engine.audioTracks.isEmpty {
-                        Menu {
-                            ForEach(engine.audioTracks) { track in
-                                Button {
-                                    engine.selectAudioTrack(id: track.id)
-                                } label: {
-                                    HStack {
-                                        let label = formatTrackTitle(track)
-                                        Text("\(label) (\(track.codecName), \(track.channels)ch)")
-                                        if track.id == engine.selectedAudioTrackId {
-                                            Image(systemName: "checkmark")
-                                        }
-                                    }
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "waveform.circle")
-                                .font(.title3)
-                                .foregroundStyle(.white.opacity(0.85))
-                        }
-                        .menuStyle(.borderlessButton)
-                        .frame(width: 24)
-                        .help("Select Audio Track")
-                    }
-
-                    // Volume & Mute Control
-                    HStack(spacing: 6) {
-                        Button {
-                            engine.isMuted.toggle()
-                        } label: {
-                            Image(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : (engine.volume < 0.5 ? "speaker.wave.1.fill" : "speaker.wave.2.fill"))
-                                .font(.caption)
-                                .foregroundStyle(.white.opacity(0.85))
-                        }
-                        .buttonStyle(.plain)
-
-                        Slider(value: $engine.volume, in: 0.0...1.0)
-                            .frame(width: 70)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.white.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+                } label: {
+                    Text(engine.activeRenderMode == .system ? "HDR" : "SDR")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(engine.activeRenderMode == .system ? Color.accentColor : Color.white.opacity(0.85))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
                 }
+                .menuStyle(.borderlessButton)
+                .help("Render Mode (HDR / SDR)")
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(.white.opacity(0.12), lineWidth: 1)
+            .background(
+                NativeVisualEffectView(material: .titlebar, blendingMode: .withinWindow)
             )
-            .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
-            .padding(.horizontal, 24)
-            .padding(.bottom, 20)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(Color(NSColor.separatorColor))
+                    .frame(height: 1)
+            }
+            .onHover { hovering in
+                isBottomHovered = hovering
+                updateInteractionState()
+            }
         }
+        .ignoresSafeArea()
+        .onChange(of: isDragging) { _, _ in
+            updateInteractionState()
+        }
+    }
+
+    private func updateInteractionState() {
+        isInteracting = isBottomHovered || isTopHovered || isDragging
     }
 
     private func formatTime(_ seconds: Double) -> String {
@@ -272,25 +248,27 @@ public struct ControlsOverlay: View {
         }
     }
 
-    private func performJump() {
-        let trimmed = jumpTimeText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+    private func showAudioTrackMenu() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
 
-        var targetSeconds: Double = 0
-        let parts = trimmed.split(separator: ":").map { String($0) }
-        if parts.count == 3, let h = Double(parts[0]), let m = Double(parts[1]), let s = Double(parts[2]) {
-            targetSeconds = h * 3600 + m * 60 + s
-        } else if parts.count == 2, let m = Double(parts[0]), let s = Double(parts[1]) {
-            targetSeconds = m * 60 + s
-        } else if let s = Double(trimmed) {
-            targetSeconds = s
+        for track in engine.audioTracks {
+            let label = formatTrackTitle(track)
+            let item = NSMenuItem(
+                title: "\(label) (\(track.codecName), \(track.channels)ch)",
+                action: #selector(AudioTrackMenuHelper.selectTrack(_:)),
+                keyEquivalent: ""
+            )
+            item.state = (track.id == engine.selectedAudioTrackId) ? .on : .off
+            let target = AudioTrackMenuHelper { [weak engine] in
+                engine?.selectAudioTrack(id: track.id)
+            }
+            item.target = target
+            item.representedObject = target
+            menu.addItem(item)
         }
 
-        let clamped = max(0, min(targetSeconds, engine.duration))
-        engine.seek(to: clamped)
-        jumpTimeText = ""
-        isFieldFocused = false
-        isInteracting = false
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
     private func formatTrackTitle(_ track: MediaDemuxer.AudioTrack) -> String {
@@ -305,5 +283,19 @@ public struct ControlsOverlay: View {
             return track.language.uppercased()
         }
         return "Track \(track.id + 1)"
+    }
+}
+
+@MainActor
+final class AudioTrackMenuHelper: NSObject {
+    private let action: () -> Void
+
+    init(action: @escaping () -> Void) {
+        self.action = action
+        super.init()
+    }
+
+    @objc func selectTrack(_ sender: Any?) {
+        action()
     }
 }

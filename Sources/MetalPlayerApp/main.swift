@@ -1,31 +1,78 @@
 import AppKit
 import SwiftUI
 import MetalPlayerUI
+import MetalPlayerCore
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    var window: NSWindow?
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var welcomeWindowController: WelcomeWindowController?
+    private var playerWindowController: PlayerWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let window = NSWindow(
-            contentRect: NSRect(x: 100, y: 100, width: 960, height: 540),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        self.window = window
-        window.title = "MetalPlayer"
-        window.center()
-        window.delegate = self
-        window.contentView = NSHostingView(rootView: ContentView())
-        window.makeKeyAndOrderFront(nil)
-
         setupMainMenu()
+
+        // Check if file passed via command line argument
+        if CommandLine.arguments.count > 1 {
+            let filePath = CommandLine.arguments[1]
+            if FileManager.default.fileExists(atPath: filePath) {
+                openMediaFile(at: URL(fileURLWithPath: filePath))
+                NSApp.activate(ignoringOtherApps: true)
+                return
+            }
+        }
+
+        showWelcomeWindow()
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func showWelcomeWindow() {
+        if welcomeWindowController == nil {
+            welcomeWindowController = WelcomeWindowController(
+                onOpenURL: { [weak self] url in
+                    self?.openMediaFile(at: url)
+                }
+            )
+        }
+        welcomeWindowController?.showWindow(nil)
+        welcomeWindowController?.window?.makeKeyAndOrderFront(nil)
+    }
+
+    func openMediaFile(at url: URL) {
+        if playerWindowController == nil {
+            let controller = PlayerWindowController()
+            controller.onClose = { [weak self] in
+                // When player window closes, return to welcome window if app is still running
+                self?.showWelcomeWindow()
+            }
+            playerWindowController = controller
+        }
+
+        // Close/hide welcome window
+        welcomeWindowController?.close()
+
+        // Open file in main player window
+        playerWindowController?.openFile(url: url)
+    }
+
+    @objc func openFileMenuItemClicked(_ sender: Any?) {
+        if let playerWC = playerWindowController, playerWC.window?.isVisible == true {
+            if let url = MediaOpenPanel.promptForMediaFile() {
+                openMediaFile(at: url)
+            }
+        } else {
+            welcomeWindowController?.promptOpenFile()
+        }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            showWelcomeWindow()
+        }
+        return true
     }
 
     private func setupMainMenu() {
@@ -37,13 +84,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
 
-        let quitTitle = "Quit MetalPlayer"
         let quitMenuItem = NSMenuItem(
-            title: quitTitle,
+            title: "Quit MetalPlayer",
             action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q"
         )
         appMenu.addItem(quitMenuItem)
+
+        // File Menu
+        let fileMenuItem = NSMenuItem()
+        mainMenu.addItem(fileMenuItem)
+        let fileMenu = NSMenu(title: "File")
+        fileMenuItem.submenu = fileMenu
+
+        let openMenuItem = NSMenuItem(
+            title: "Open File…",
+            action: #selector(openFileMenuItemClicked(_:)),
+            keyEquivalent: "o"
+        )
+        openMenuItem.target = self
+        fileMenu.addItem(openMenuItem)
 
         // Window Menu
         let windowMenuItem = NSMenuItem()

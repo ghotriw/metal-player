@@ -71,12 +71,8 @@ public final class NativePlayerEngine: PlayerEngine {
             audioRenderer.volume = isMuted ? 0.0 : volume
         }
     }
-    public var audioTracks: [MediaDemuxer.AudioTrack] {
-        demuxer?.audioTracks ?? []
-    }
-    public var selectedAudioTrackId: Int {
-        demuxer?.selectedAudioTrackIndex ?? -1
-    }
+    public var audioTracks: [MediaDemuxer.AudioTrack] = []
+    public var selectedAudioTrackId: Int = -1
 
     public let displayLayer = AVSampleBufferDisplayLayer()
     public let metalRenderer = MetalVideoRenderer()
@@ -241,6 +237,8 @@ public final class NativePlayerEngine: PlayerEngine {
         self.videoWidth = newDemuxer.width
         self.videoHeight = newDemuxer.height
         self.mediaTitle = URL(fileURLWithPath: path).lastPathComponent
+        self.audioTracks = newDemuxer.audioTracks
+        self.selectedAudioTrackId = newDemuxer.selectedAudioTrackIndex
         self.isLoaded = true
         self.metalRenderer?.updateUniforms { uniforms in
             uniforms.sourcePeakNits = newDemuxer.maxPeakNits
@@ -405,6 +403,7 @@ public final class NativePlayerEngine: PlayerEngine {
         audioDecoder?.flush()
 
         demuxer.selectAudioTrack(trackId: id)
+        self.selectedAudioTrackId = id
         if let params = demuxer.getAudioCodecParameters() {
             let decoder = FFAudioDecoder(codecParameters: params, timebase: demuxer.audioTimebase)
             self.audioDecoder = decoder

@@ -3,41 +3,41 @@ import AppKit
 import MetalPlayerCore
 
 public struct ContentView: View {
-    @State private var engine = NativePlayerEngine()
+    public let engine: NativePlayerEngine
+    public var onFileLoaded: ((URL) -> Void)?
+    public var onControlsVisibilityChanged: ((Bool) -> Void)?
+
     @State private var isControlsVisible: Bool = true
     @State private var isUserInteracting: Bool = false
     @State private var hideTimer: Task<Void, Never>?
 
-    public init() {}
+    public init(
+        engine: NativePlayerEngine,
+        onFileLoaded: ((URL) -> Void)? = nil,
+        onControlsVisibilityChanged: ((Bool) -> Void)? = nil
+    ) {
+        self.engine = engine
+        self.onFileLoaded = onFileLoaded
+        self.onControlsVisibilityChanged = onControlsVisibilityChanged
+    }
 
     public var body: some View {
         ZStack {
             // Video Surface View
             VideoSurfaceView(engine: engine) { filePath in
+                let url = URL(fileURLWithPath: filePath)
                 engine.load(path: filePath)
+                onFileLoaded?(url)
                 scheduleControlsHide()
             }
             .ignoresSafeArea()
 
-            // Empty state placeholder
+            // Subtle loading indicator while engine is parsing/decoding first frame
             if !engine.isLoaded {
-                VStack(spacing: 16) {
-                    Image(systemName: "film.stack")
-                        .font(.system(size: 56, weight: .thin))
-                        .foregroundStyle(.white.opacity(0.6))
-
-                    Text("Drop video file here")
-                        .font(.title3)
-                        .foregroundStyle(.white.opacity(0.85))
-
-                    Button("Open File") {
-                        openFileDialog()
-                    }
-                    .buttonStyle(.borderedProminent)
+                ProgressView()
                     .controlSize(.large)
-                }
-                .padding(40)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24))
+                    .tint(.white)
+                    .shadow(radius: 8)
             }
 
             // Controls Overlay
@@ -65,6 +65,12 @@ public struct ContentView: View {
                 scheduleControlsHide()
             }
         }
+        .onChange(of: isControlsVisible) { _, visible in
+            onControlsVisibilityChanged?(visible)
+        }
+        .onAppear {
+            onControlsVisibilityChanged?(isControlsVisible)
+        }
         // Keyboard shortcuts
         .onKeyPress(.space) {
             engine.togglePlayPause()
@@ -80,15 +86,6 @@ public struct ContentView: View {
             engine.seekRelative(by: 5)
             showControlsTemporarily()
             return .handled
-        }
-        .onAppear {
-            if CommandLine.arguments.count > 1 {
-                let filePath = CommandLine.arguments[1]
-                if FileManager.default.fileExists(atPath: filePath) {
-                    engine.load(path: filePath)
-                    scheduleControlsHide()
-                }
-            }
         }
     }
 
@@ -113,14 +110,9 @@ public struct ContentView: View {
     }
 
     private func openFileDialog() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.movie, .video, .quickTimeMovie]
-
-        if panel.runModal() == .OK, let url = panel.url {
+        if let url = MediaOpenPanel.promptForMediaFile() {
             engine.load(path: url.path)
+            onFileLoaded?(url)
             scheduleControlsHide()
         }
     }
