@@ -71,8 +71,8 @@
     "shadow_matrix": "0 0 0 0 0.1 0 0 0 0 0.02 0 0 0 0 0.22 0 0 0 0.28 0",
     "gradients": {
       "paint0": [
-        { "offset": "0", "color": "#1E1B4B" },
-        { "offset": "1", "color": "#31104B" }
+        { "offset": "0", "color": "#282358" },
+        { "offset": "1", "color": "#3D1755" }
       ],
       "paint1": [
         { "offset": "0", "color": "#25164B" },

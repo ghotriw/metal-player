@@ -52,8 +52,8 @@ public enum LogoTheme: String, CaseIterable, Sendable {
             ]
         case .monterey:
             [
-                .init(color: Color(hex: 0x1E1B4B), location: 0.0),
-                .init(color: Color(hex: 0x31104B), location: 1.0),
+                .init(color: Color(hex: 0x282358), location: 0.0),
+                .init(color: Color(hex: 0x3D1755), location: 1.0),
             ]
         case .twilight:
             [
