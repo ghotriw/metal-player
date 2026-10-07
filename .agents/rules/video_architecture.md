@@ -4,6 +4,15 @@ This document defines the core architecture principles, colorimetry standards, t
 
 ---
 
+## 0. Target Platform Baseline & Modern API Mandate
+- **Deployment Target:** macOS 15.0+ (Sequoia) / Apple Silicon (ARM64).
+- **Language Mode:** Swift 6 with Strict Concurrency checking enabled (`-strict-concurrency=complete`, `ExistentialAny`).
+- **Zero Legacy API Policy:**
+  - Strictly prohibit APIs deprecated in macOS 14/15 or originating from OS X Carbon/Tiger era (e.g., `CVDisplayLink`, raw C callbacks, manual `Unmanaged.toOpaque()` pointer casting).
+  - Modern QuartzCore, Metal, and AVFoundation system APIs (`CADisplayLink`, `AVSampleBufferRenderSynchronizer`, Swift Concurrency `@Observable`, `@MainActor`, `OSAllocatedUnfairLock`) must be utilized exclusively.
+
+---
+
 ## 1. Project Mission & Target Visual Standards
 Deliver reference-grade playback of HDR and Dolby Vision (Profile 8.1 / HDR10) video on macOS:
 1. **On Standard SDR Displays (External 4K/5K monitors without HDR, EDR == 1.0):**
@@ -87,13 +96,21 @@ To support embedding into host applications with web-driven frontends (e.g., `WK
   - Output electro-optical transfer function: **pure power Gamma 2.2** (`pow(max(c, 0.0), 1.0 / 2.2)`).
   - Contrast-Adaptive Sharpening: AMD FidelityFX CAS formulation (`peak = -1.0 / mix(8.0, 5.0, strength); weight = amplitude * peak;`). Guarantees no division by zero or NaN artifacts when `strength = 1.0`.
 
-### 3.3. Thread Safety & Swift Concurrency
+### 3.3. VSYNC Synchronization & Display Pacing (CADisplayLink macOS 14+)
+- **Strict Prohibition of Legacy `CVDisplayLink`:** Under no circumstances should deprecated C-API `CVDisplayLink` (`CVDisplayLinkCreateWithActiveCGDisplays`, `CVDisplayLinkSetOutputCallback`) be used. It originates from 2005 (Mac OS X Tiger), causes desynchronization on ProMotion 120Hz dynamic refresh rates, fails to migrate automatically across screens with different refresh rates, and requires unsafe raw C pointers (`Unmanaged.toOpaque()`).
+- **Native `CADisplayLink` Architecture:**
+  - VSYNC synchronization is driven by modern `CADisplayLink` (macOS 14+ / QuartzCore).
+  - The link must be attached directly to the host view via `view.displayLink(target:selector:)` or `screen.displayLink(...)`, ensuring QuartzCore compositor awareness and automatic multi-monitor display tracking.
+  - Must explicitly configure `preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 120, preferred: 120)` to natively adapt to ProMotion and variable refresh rates without frame drops or jitter.
+  - Pacing lifecycle is managed via `.isPaused` and cleanly destroyed via `.invalidate()`.
+
+### 3.4. Thread Safety & Swift Concurrency
 - `MetalVideoRenderer` is isolated using `renderLock: NSLock` (synchronizing draw calls across display link and UI frame invalidation) and `OSAllocatedUnfairLock` (protecting `ToneMapUniforms`).
 - Both `ToneMapUniforms` and `RenderMode` must conform to `Sendable`.
-- `activeRenderMode` must be held behind an `OSAllocatedUnfairLock` and exposed as `nonisolated` to allow `CVDisplayLink` to query the mode without actor hops or priority inversions.
-- From within the `CVDisplayLink` C-callback, any state changes targeting `@MainActor` properties (such as `isMetalLayerVisible`) must be dispatched via `DispatchQueue.main.async`. **Never call `MainActor.assumeIsolated`** from this callback; doing so triggers an immediate trap in `libdispatch`.
+- `activeRenderMode` must be held behind an `OSAllocatedUnfairLock` and exposed as `nonisolated` to allow the display link to query the mode without actor hops or priority inversions.
+- Any UI state changes originating from the display link loop (such as `isMetalLayerVisible`) must be isolated cleanly on `@MainActor`.
 
-### 3.4. Pause Frame Accuracy
+### 3.5. Pause Frame Accuracy
 - `FrameQueue` preserves the most recently displayed buffer in `lastRenderedBuffer: CVPixelBuffer?`.
 - Mode switching or scrubbing while paused invokes `renderCurrentFrame()`, which re-renders the frozen buffer to guarantee frame-accurate parity without time drift.
 

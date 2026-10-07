@@ -70,6 +70,7 @@ public final class NativeVideoHostView: NSView {
                 object: window
             )
             updateScreenHDRStatus()
+            engine.attachDisplayLink(to: self)
         }
     }
 

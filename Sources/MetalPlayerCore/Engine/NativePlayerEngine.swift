@@ -1,7 +1,9 @@
 import AVFoundation
+import AppKit
 import CoreMedia
 import Foundation
 import Observation
+import QuartzCore
 import os
 
 @Observable
@@ -97,7 +99,21 @@ public final class NativePlayerEngine: PlayerEngine {
     private let isFeeding = OSAllocatedUnfairLock(initialState: false)
 
     private let frameQueue = FrameQueue()
-    private var displayLink: CVDisplayLink?
+    private var displayLink: CADisplayLink?
+    private var displayLinkTarget: DisplayLinkTarget?
+
+    private final class DisplayLinkTarget: NSObject, @unchecked Sendable {
+        private weak var engine: NativePlayerEngine?
+
+        init(engine: NativePlayerEngine) {
+            self.engine = engine
+            super.init()
+        }
+
+        @objc func onTick(_ link: CADisplayLink) {
+            engine?.displayLinkTick()
+        }
+    }
 
     public convenience init() {
         self.init(configuration: PlayerConfiguration())
@@ -177,20 +193,31 @@ public final class NativePlayerEngine: PlayerEngine {
     }
 
     private func setupDisplayLink() {
-        var dl: CVDisplayLink?
-        CVDisplayLinkCreateWithActiveCGDisplays(&dl)
-        guard let link = dl else { return }
-        self.displayLink = link
+        let target = DisplayLinkTarget(engine: self)
+        self.displayLinkTarget = target
 
-        let callback: CVDisplayLinkOutputCallback = {
-            (displayLink, inNow, inOutputTime, flagsIn, flagsOut, displayLinkContext) -> CVReturn in
-            guard let context = displayLinkContext else { return kCVReturnSuccess }
-            let engine = Unmanaged<NativePlayerEngine>.fromOpaque(context).takeUnretainedValue()
-            engine.displayLinkTick()
-            return kCVReturnSuccess
+        // If a screen is available on initialization, attach CADisplayLink to NSScreen.main
+        if let screen = NSScreen.main {
+            let link = screen.displayLink(target: target, selector: #selector(DisplayLinkTarget.onTick(_:)))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 120, preferred: 120)
+            link.add(to: .main, forMode: .common)
+            link.isPaused = true
+            self.displayLink = link
         }
+    }
 
-        CVDisplayLinkSetOutputCallback(link, callback, Unmanaged.passUnretained(self).toOpaque())
+    /// Attaches the engine's CADisplayLink to the video rendering host view.
+    /// This ensures accurate VBLANK sync across ProMotion (120Hz) displays and seamless multi-monitor transitions.
+    public func attachDisplayLink(to view: NSView) {
+        displayLink?.invalidate()
+        let target = displayLinkTarget ?? DisplayLinkTarget(engine: self)
+        self.displayLinkTarget = target
+
+        let link = view.displayLink(target: target, selector: #selector(DisplayLinkTarget.onTick(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 120, preferred: 120)
+        link.add(to: .main, forMode: .common)
+        link.isPaused = !isPlaying
+        self.displayLink = link
     }
 
     private func updateEffectiveRenderMode() {
@@ -330,9 +357,7 @@ public final class NativePlayerEngine: PlayerEngine {
                 self.frameQueue.clear()
                 self.startFeeding()
                 self.synchronizer.setRate(1.0, time: .zero)
-                if let displayLink = self.displayLink {
-                    CVDisplayLinkStart(displayLink)
-                }
+                self.displayLink?.isPaused = false
                 self.isPlaying = true
             }
         }
@@ -355,7 +380,7 @@ public final class NativePlayerEngine: PlayerEngine {
         displayLayer.requestMediaDataWhenReady(on: feedQueue) { [demuxer] in
             while layer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
                 // Backpressure: If Metal tone mapping is active and frameQueue already has >45 decoded frames (~1.8 seconds),
-                // yield feedQueue briefly to let CVDisplayLink drain the queue and prevent buffer exhaustion.
+                // yield feedQueue briefly to let CADisplayLink drain the queue and prevent buffer exhaustion.
                 if modeLock.withLock({ $0 == .metalToneMap }) && queue.count >= 45 {
                     Thread.sleep(forTimeInterval: 0.010)
                     if !feedingLock.withLock({ $0 }) { break }
@@ -458,17 +483,13 @@ public final class NativePlayerEngine: PlayerEngine {
             startFeeding()
         }
         synchronizer.setRate(1.0, time: synchronizer.currentTime())
-        if let displayLink {
-            CVDisplayLinkStart(displayLink)
-        }
+        displayLink?.isPaused = false
         isPlaying = true
     }
 
     public func pause() {
         synchronizer.setRate(0.0, time: synchronizer.currentTime())
-        if let displayLink {
-            CVDisplayLinkStop(displayLink)
-        }
+        displayLink?.isPaused = true
         isFeeding.withLock { $0 = false }
         displayLayer.stopRequestingMediaData()
         audioRenderer.stopRequestingMediaData()
@@ -512,9 +533,7 @@ public final class NativePlayerEngine: PlayerEngine {
                 DispatchQueue.main.async {
                     self.startFeeding()
                     self.synchronizer.setRate(1.0, time: targetTime)
-                    if let displayLink = self.displayLink {
-                        CVDisplayLinkStart(displayLink)
-                    }
+                    self.displayLink?.isPaused = false
                     self.isPlaying = true
                 }
             } else {
@@ -571,10 +590,8 @@ public final class NativePlayerEngine: PlayerEngine {
         if let obs = audioAutoFlushObserver {
             NotificationCenter.default.removeObserver(obs)
         }
-        if let displayLink {
-            CVDisplayLinkStop(displayLink)
-            CVDisplayLinkSetOutputCallback(displayLink, nil, nil)
-        }
+        displayLink?.invalidate()
+        displayLink = nil
         isFeeding.withLock { $0 = false }
         displayLayer.stopRequestingMediaData()
         audioRenderer.stopRequestingMediaData()
