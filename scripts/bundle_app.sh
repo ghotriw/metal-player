@@ -33,6 +33,13 @@ for b in "$DIR/.build/out/Products/Debug/"*.bundle; do
     fi
 done
 
+# Copy app icon if present in project resources
+APP_ICON="$DIR/Sources/MetalPlayerApp/Resources/AppIcon.icns"
+if [ -f "$APP_ICON" ]; then
+    echo "==> Including AppIcon.icns..."
+    cp "$APP_ICON" "$RESOURCES_DIR/AppIcon.icns"
+fi
+
 # Create Info.plist with valid bundle identifier
 cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -43,6 +50,8 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
     <string>en</string>
     <key>CFBundleExecutable</key>
     <string>MetalPlayer</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.ghotriw.metalplayer</string>
     <key>CFBundleInfoDictionaryVersion</key>

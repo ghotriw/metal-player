@@ -31,28 +31,9 @@ public struct WelcomeView: View {
             .gesture(WindowDragGesture())
 
             VStack(spacing: 28) {
-                // App Logo / Symbol (play button design)
-                ZStack {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.accentColor.opacity(0.9),
-                                    Color.accentColor.opacity(0.6),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 84, height: 84)
-                        .shadow(
-                            color: Color.accentColor.opacity(colorScheme == .dark ? 0.4 : 0.25), radius: 16, x: 0, y: 8)
-
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 38, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .offset(x: 3)
-                }
+                // App Logo (Native vector logo)
+                LogoView(theme: .monterey)
+                    .frame(width: 80, height: 88)
 
                 // Title & Subtitle
                 VStack(spacing: 6) {

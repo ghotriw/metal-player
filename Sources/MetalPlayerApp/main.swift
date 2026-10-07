@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var playerWindowController: PlayerWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setupAppIcon()
         setupMainMenu()
 
         // Check if file passed via command line argument
@@ -52,6 +53,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Open file in main player window
         playerWindowController?.openFile(url: url)
+    }
+
+    private func setupAppIcon() {
+        if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = icon
+        }
     }
 
     @objc func openFileMenuItemClicked(_ sender: Any?) {

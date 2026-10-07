@@ -39,6 +39,9 @@ let package = Package(
         .executableTarget(
             name: "MetalPlayerApp",
             dependencies: ["MetalPlayerCore", "MetalPlayerUI"],
+            resources: [
+                .process("Resources")
+            ],
             swiftSettings: defaultSwiftSettings
         ),
         .testTarget(

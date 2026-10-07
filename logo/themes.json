@@ -1,0 +1,113 @@
+{
+  "emerald": {
+    "name": "Emerald",
+    "shadow_matrix": "0 0 0 0 0.02 0 0 0 0 0.15 0 0 0 0 0.08 0 0 0 0.25 0",
+    "gradients": {
+      "paint0": [
+        { "offset": "0", "color": "#064E3B" },
+        { "offset": "1", "color": "#047857" }
+      ],
+      "paint1": [
+        { "offset": "0", "color": "#064E3B" },
+        { "offset": "0.35", "color": "#059669" },
+        { "offset": "0.7", "color": "#10B981" },
+        { "offset": "1", "color": "#65A30D" }
+      ],
+      "paint2": [
+        { "offset": "0", "color": "#84CC16" },
+        { "offset": "0.4", "color": "#A3E635" },
+        { "offset": "0.75", "color": "#FACC15" },
+        { "offset": "1", "color": "#FEF08A" }
+      ]
+    }
+  },
+  "coral-pink": {
+    "name": "Coral Pink",
+    "shadow_matrix": "0 0 0 0 0.22 0 0 0 0 0.04 0 0 0 0 0.08 0 0 0 0.25 0",
+    "gradients": {
+      "paint0": [
+        { "offset": "0", "color": "#4C0519" },
+        { "offset": "1", "color": "#881337" }
+      ],
+      "paint1": [
+        { "offset": "0", "color": "#9F1239" },
+        { "offset": "0.25", "color": "#BE123C" },
+        { "offset": "0.55", "color": "#E6434F" },
+        { "offset": "0.85", "color": "#E6434F" },
+        { "offset": "1", "color": "#F43F5E" }
+      ],
+      "paint2": [
+        { "offset": "0", "color": "#E6434F" },
+        { "offset": "0.45", "color": "#FB7185" },
+        { "offset": "0.8", "color": "#FDA4AF" },
+        { "offset": "1", "color": "#FFE4E6" }
+      ]
+    }
+  },
+  "monochrome": {
+    "name": "Monochrome",
+    "shadow_matrix": "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.35 0",
+    "gradients": {
+      "paint0": [
+        { "offset": "0", "color": "#0F172A" },
+        { "offset": "1", "color": "#334155" }
+      ],
+      "paint1": [
+        { "offset": "0", "color": "#1E293B" },
+        { "offset": "0.35", "color": "#475569" },
+        { "offset": "0.7", "color": "#64748B" },
+        { "offset": "1", "color": "#94A3B8" }
+      ],
+      "paint2": [
+        { "offset": "0", "color": "#94A3B8" },
+        { "offset": "0.4", "color": "#CBD5E1" },
+        { "offset": "0.75", "color": "#E2E8F0" },
+        { "offset": "1", "color": "#F8FAFC" }
+      ]
+    }
+  },
+  "monterey": {
+    "name": "Monterey",
+    "shadow_matrix": "0 0 0 0 0.1 0 0 0 0 0.02 0 0 0 0 0.22 0 0 0 0.28 0",
+    "gradients": {
+      "paint0": [
+        { "offset": "0", "color": "#1E1B4B" },
+        { "offset": "1", "color": "#31104B" }
+      ],
+      "paint1": [
+        { "offset": "0", "color": "#25164B" },
+        { "offset": "0.3", "color": "#581C87" },
+        { "offset": "0.65", "color": "#9333EA" },
+        { "offset": "1", "color": "#DB2777" }
+      ],
+      "paint2": [
+        { "offset": "0", "color": "#C026D3" },
+        { "offset": "0.4", "color": "#EC4899" },
+        { "offset": "0.75", "color": "#F43F5E" },
+        { "offset": "1", "color": "#FB7185" }
+      ]
+    }
+  },
+  "twilight": {
+    "name": "Twilight",
+    "shadow_matrix": "0 0 0 0 0.0784314 0 0 0 0 0.00784314 0 0 0 0 0.141176 0 0 0 0.25 0",
+    "gradients": {
+      "paint0": [
+        { "offset": "0", "color": "#3B0764" },
+        { "offset": "1", "color": "#7E22CE" }
+      ],
+      "paint1": [
+        { "offset": "0", "color": "#3B0764" },
+        { "offset": "0.35", "color": "#7E22CE" },
+        { "offset": "0.7", "color": "#C026D3" },
+        { "offset": "1", "color": "#E11D48" }
+      ],
+      "paint2": [
+        { "offset": "0", "color": "#F43F5E" },
+        { "offset": "0.4", "color": "#FB7185" },
+        { "offset": "0.75", "color": "#F59E0B" },
+        { "offset": "1", "color": "#FCD34D" }
+      ]
+    }
+  }
+}
