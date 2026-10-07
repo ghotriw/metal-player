@@ -21,11 +21,19 @@ public final class FrameQueue: @unchecked Sendable {
     private var head: Int = 0
     private var countInternal: Int = 0
     private var lastRenderedBuffer: CVPixelBuffer?
+    private var droppedFramesCountInternal: Int = 0
 
     public init(capacity: Int = defaultCapacity) {
         precondition(capacity > 0, "Capacity must be positive")
         self.capacity = capacity
         self.buffer = [VTVideoDecoder.DecodedFrame?](repeating: nil, count: capacity)
+    }
+
+    /// The total number of frames discarded or dropped (late / expired).
+    public var droppedFramesCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return droppedFramesCountInternal
     }
 
     /// The number of decoded frames currently held in the buffer.
@@ -106,14 +114,15 @@ public final class FrameQueue: @unchecked Sendable {
     }
 
     /// Pops the next frame whose PTS matches or precedes `syncTime + maxLeadTime`.
-    /// Immediately releases the internal `DecodedFrame` reference and returns its `CVPixelBuffer`.
-    public func popFrame(forSyncTime syncTime: CMTime) -> CVPixelBuffer? {
+    /// Immediately releases the internal `DecodedFrame` reference and returns its `CVPixelBuffer` along with its `pts`.
+    public func popFrame(forSyncTime syncTime: CMTime) -> (pixelBuffer: CVPixelBuffer, pts: CMTime)? {
         lock.lock()
         defer { lock.unlock() }
         guard countInternal > 0 else { return nil }
 
         let maxLeadTime = CMTime(value: 50, timescale: 1000)
         var chosen: CVPixelBuffer?
+        var chosenPts: CMTime = .invalid
 
         while countInternal > 0 {
             guard let frame = buffer[head] else {
@@ -125,7 +134,12 @@ public final class FrameQueue: @unchecked Sendable {
 
             if frame.pts <= syncTime + maxLeadTime {
                 if !frame.doNotDisplay {
+                    if chosen != nil {
+                        // We skipped an older frame in this cycle because a fresher one was also eligible
+                        droppedFramesCountInternal += 1
+                    }
                     chosen = frame.pixelBuffer
+                    chosenPts = frame.pts
                 }
                 // Zero out reference immediately to return IOSurface to hardware pool
                 buffer[head] = nil
@@ -138,8 +152,9 @@ public final class FrameQueue: @unchecked Sendable {
 
         if let chosen {
             lastRenderedBuffer = chosen
+            return (chosen, chosenPts)
         }
-        return chosen
+        return nil
     }
 
     /// Retrieves the latest displayable frame matching `syncTime + leadTime`, without popping from the queue.
@@ -184,8 +199,15 @@ public final class FrameQueue: @unchecked Sendable {
         return lastRenderedBuffer
     }
 
+    /// Resets the cumulative dropped frames counter (e.g. on new media load or manual seek).
+    public func resetDroppedFramesCount() {
+        lock.lock()
+        defer { lock.unlock() }
+        droppedFramesCountInternal = 0
+    }
+
     /// Clears all frames and releases all `IOSurface` backing buffers immediately.
-    public func clear() {
+    public func clear(resetDroppedFrames: Bool = false) {
         lock.lock()
         defer { lock.unlock() }
         for i in 0..<capacity {
@@ -194,5 +216,8 @@ public final class FrameQueue: @unchecked Sendable {
         head = 0
         countInternal = 0
         lastRenderedBuffer = nil
+        if resetDroppedFrames {
+            droppedFramesCountInternal = 0
+        }
     }
 }

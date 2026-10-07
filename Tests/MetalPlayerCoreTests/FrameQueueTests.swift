@@ -48,7 +48,7 @@ struct FrameQueueTests {
 
         // Popping at 1.0s should yield buf1 first
         let popped = queue.popFrame(forSyncTime: CMTime(seconds: 1.0, preferredTimescale: 1000))
-        #expect(popped === buf1)
+        #expect(popped?.pixelBuffer === buf1)
         #expect(queue.count == 2)
     }
 
@@ -70,7 +70,7 @@ struct FrameQueueTests {
                 duration: CMTime(value: 41, timescale: 1000), doNotDisplay: false))
 
         let popped = queue.popFrame(forSyncTime: CMTime(seconds: 1.05, preferredTimescale: 1000))
-        #expect(popped === buf2)
+        #expect(popped?.pixelBuffer === buf2)
     }
 
     @Test("Future frames exceeding lead time are held in the queue")
@@ -123,7 +123,7 @@ struct FrameQueueTests {
         #expect(queue.count == 60)
         // Earliest frame (PTS 1.0) must still be at the head of the queue!
         let popped = queue.popFrame(forSyncTime: CMTime(seconds: 1.0, preferredTimescale: 1000))
-        #expect(popped === firstBuffer)
+        #expect(popped?.pixelBuffer === firstBuffer)
     }
 
     @Test("Ring buffer handles wrap-around cycles and complex B-frame out-of-order bursts")
@@ -157,7 +157,7 @@ struct FrameQueueTests {
             for offset in expectedOffsets {
                 let ptsSec = baseSeconds + offset
                 let popped = queue.popFrame(forSyncTime: CMTime(seconds: ptsSec, preferredTimescale: 1000))
-                #expect(popped === buffers[ptsSec])
+                #expect(popped?.pixelBuffer === buffers[ptsSec])
             }
             #expect(queue.count == 0)
         }

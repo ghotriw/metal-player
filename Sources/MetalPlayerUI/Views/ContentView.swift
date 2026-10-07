@@ -40,6 +40,20 @@ public struct ContentView: View {
                     .shadow(radius: 8)
             }
 
+            // Performance Telemetry HUD
+            if engine.showDebugHUD {
+                VStack {
+                    HStack {
+                        Spacer()
+                        PerformanceHUDView(engine: engine)
+                            .padding(.top, 46)
+                            .padding(.trailing, 16)
+                    }
+                    Spacer()
+                }
+                .transition(.opacity.animation(.easeInOut(duration: 0.15)))
+            }
+
             // Controls Overlay
             if isControlsVisible || !engine.isLoaded || isUserInteracting {
                 ControlsOverlay(engine: engine, isInteracting: $isUserInteracting) {
@@ -77,6 +91,18 @@ public struct ContentView: View {
             showControlsTemporarily()
             return .handled
         }
+        .onKeyPress(KeyEquivalent("d")) {
+            withAnimation {
+                engine.showDebugHUD.toggle()
+            }
+            return .handled
+        }
+        .onKeyPress(KeyEquivalent("i"), action: {
+            withAnimation {
+                engine.showDebugHUD.toggle()
+            }
+            return .handled
+        })
         .onKeyPress(.leftArrow) {
             engine.seekRelative(by: -5)
             showControlsTemporarily()

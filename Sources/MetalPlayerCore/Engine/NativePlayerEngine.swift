@@ -103,6 +103,16 @@ public final class NativePlayerEngine: PlayerEngine {
     private let isMetalLayerVisibleLock = OSAllocatedUnfairLock(initialState: false)
     @ObservationIgnored
     private let isVideoDrainPaused = OSAllocatedUnfairLock(initialState: false)
+    public var showDebugHUD: Bool = false {
+        didSet {
+            if showDebugHUD {
+                currentMetrics = performanceMonitor.currentMetrics
+            }
+        }
+    }
+    public var currentMetrics: PlayerPerformanceMonitor.Metrics = PlayerPerformanceMonitor.Metrics()
+    public let performanceMonitor = PlayerPerformanceMonitor.shared
+    private var metricsTimer: DispatchSourceTimer?
 
     private let frameQueue = FrameQueue()
     private var displayLink: CADisplayLink?
@@ -149,6 +159,7 @@ public final class NativePlayerEngine: PlayerEngine {
         setupDisplayLink()
         setupAudioObservers()
         updateEffectiveRenderMode()
+        setupMetricsMonitoring()
 
         timeObserver = synchronizer.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main)
         { [weak self] time in
@@ -196,6 +207,35 @@ public final class NativePlayerEngine: PlayerEngine {
             self.audioRenderer.flush()
             self.audioDecoder?.flush()
         }
+    }
+
+    private func setupMetricsMonitoring() {
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
+        timer.schedule(deadline: .now() + 0.5, repeating: 0.5)
+        timer.setEventHandler { [weak self] in
+            guard let self, self.showDebugHUD else { return }
+            let statusDesc: String = {
+                switch self.displayLayer.status {
+                case .rendering: return "Rendering"
+                case .failed: return "Failed"
+                default: return "Waiting"
+                }
+            }()
+            self.performanceMonitor.updateNativeLayerStatus(statusDesc)
+
+            // Gather Mach kernel metrics on a low-priority utility queue to keep Main Thread 100% free
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                guard let self else { return }
+                self.performanceMonitor.updateProcessMetrics()
+                let metrics = self.performanceMonitor.currentMetrics
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.showDebugHUD else { return }
+                    self.currentMetrics = metrics
+                }
+            }
+        }
+        timer.resume()
+        self.metricsTimer = timer
     }
 
     private func setupDisplayLink() {
@@ -311,8 +351,24 @@ public final class NativePlayerEngine: PlayerEngine {
         let currentSyncTime = synchronizer.currentTime()
         guard currentSyncTime.isValid else { return }
 
-        if let buffer = frameQueue.popFrame(forSyncTime: currentSyncTime) {
-            metalRenderer?.render(pixelBuffer: buffer)
+        let start = CACurrentMediaTime()
+        if let popped = frameQueue.popFrame(forSyncTime: currentSyncTime) {
+            metalRenderer?.render(pixelBuffer: popped.pixelBuffer)
+            let durationMs = (CACurrentMediaTime() - start) * 1000.0
+            let qCount = frameQueue.count
+            let isPaused = isVideoDrainPaused.withLock { $0 }
+            let driftMs = popped.pts.isValid ? (popped.pts.seconds - currentSyncTime.seconds) * 1000.0 : 0.0
+            let dropped = frameQueue.droppedFramesCount
+
+            performanceMonitor.recordRenderedFrame(
+                durationMs: durationMs,
+                queueCount: qCount,
+                renderModeName: "Metal SDR",
+                isDrainPaused: isPaused,
+                avSyncDriftMs: driftMs,
+                droppedFrames: dropped
+            )
+
             if !isMetalLayerVisibleLock.withLock({ $0 }) {
                 isMetalLayerVisibleLock.withLock { $0 = true }
                 DispatchQueue.main.async { [weak self] in
@@ -383,6 +439,28 @@ public final class NativePlayerEngine: PlayerEngine {
                 uniforms.colorSpaceMode = 0  // Standard BT.2020 YCbCr
             }
         }
+        // Update telemetry metadata
+        let primariesStr: String = {
+            if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 { return "BT.709" }
+            if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3 || newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65 { return "DCI-P3" }
+            return "BT.2020"
+        }()
+        let transferStr: String = {
+            if newDemuxer.isDolbyVisionProfile5 { return "Dolby Vision (ICtCp)" }
+            if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2 || newDemuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma { return "BT.709 / SDR" }
+            if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG { return "HLG" }
+            return "PQ (ST 2084)"
+        }()
+        performanceMonitor.updateStreamMetadata(
+            resolution: "\(newDemuxer.width)x\(newDemuxer.height)",
+            codecName: newDemuxer.codec == .hevc ? "HEVC" : "H.264",
+            bitDepth: newDemuxer.bitDepth,
+            colorPrimaries: primariesStr,
+            transferFunction: transferStr,
+            sourcePeakNits: newDemuxer.maxPeakNits,
+            targetNits: 203.0
+        )
+
         print(
             "[NativePlayerEngine] Loaded successfully. Duration: \(duration)s, peakNits: \(newDemuxer.maxPeakNits), formatDesc: \(String(describing: newDemuxer.formatDescription))"
         )
@@ -412,11 +490,12 @@ public final class NativePlayerEngine: PlayerEngine {
             decoder.flush()
             guard let self else { return }
             DispatchQueue.main.async {
-                self.frameQueue.clear()
+                self.frameQueue.clear(resetDroppedFrames: true)
                 self.startFeeding()
                 self.synchronizer.setRate(1.0, time: .zero)
                 self.displayLink?.isPaused = false
                 self.isPlaying = true
+                self.performanceMonitor.handlePlaybackStateChange(isPlaying: true)
             }
         }
     }
@@ -485,10 +564,17 @@ public final class NativePlayerEngine: PlayerEngine {
                         // Decode via VTVideoDecoder for Metal tone-mapping.
                         // Do NOT call layer.enqueue(sampleBuf)! AVSampleBufferDisplayLayer decodes frames even when hidden,
                         // which causes 4K double-decoding and wastes 50-70% CPU.
+                        let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
+                        let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval("EnqueueDecodeFrame", id: signpostID)
                         decoder.decode(sampleBuffer: sampleBuf)
+                        PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueDecodeFrame", interval)
                     } else {
                         // Native mode: Feed displayLayer directly
+                        let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
+                        let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval("EnqueueNativeSample", id: signpostID)
                         layer.enqueue(sampleBuf)
+                        PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueNativeSample", interval)
+                        PlayerPerformanceMonitor.shared.recordNativeEnqueuedSample()
                     }
                 } else {
                     print("[NativePlayerEngine] Demuxer returned nil.")
@@ -563,6 +649,7 @@ public final class NativePlayerEngine: PlayerEngine {
         synchronizer.setRate(1.0, time: synchronizer.currentTime())
         displayLink?.isPaused = false
         isPlaying = true
+        performanceMonitor.handlePlaybackStateChange(isPlaying: true)
     }
 
     public func pause() {
@@ -572,6 +659,7 @@ public final class NativePlayerEngine: PlayerEngine {
         displayLayer.stopRequestingMediaData()
         audioRenderer.stopRequestingMediaData()
         isPlaying = false
+        performanceMonitor.handlePlaybackStateChange(isPlaying: false)
     }
 
     public func togglePlayPause() {
@@ -594,7 +682,7 @@ public final class NativePlayerEngine: PlayerEngine {
         audioRenderer.stopRequestingMediaData()
         audioRenderer.flush()
         audioDecoder?.flush()
-        frameQueue.clear()
+        frameQueue.clear(resetDroppedFrames: true)
 
         currentTime = seconds
         let targetTime = CMTime(seconds: seconds, preferredTimescale: 1000)
@@ -674,6 +762,8 @@ public final class NativePlayerEngine: PlayerEngine {
         }
         displayLink?.invalidate()
         displayLink = nil
+        metricsTimer?.cancel()
+        metricsTimer = nil
         isFeeding.withLock { $0 = false }
         displayLayer.stopRequestingMediaData()
         audioRenderer.stopRequestingMediaData()

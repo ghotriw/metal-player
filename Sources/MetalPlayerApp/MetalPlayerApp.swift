@@ -88,6 +88,15 @@ struct MetalPlayerApp: App {
                     }
                 }
             }
+
+            CommandMenu("View") {
+                Button("Toggle Performance HUD") {
+                    if let engine = appDelegate.playerWindowController?.engine {
+                        engine.showDebugHUD.toggle()
+                    }
+                }
+                .keyboardShortcut("i", modifiers: [.command])
+            }
         }
     }
 }
