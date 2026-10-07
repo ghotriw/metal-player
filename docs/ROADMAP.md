@@ -21,13 +21,14 @@ The goal is to evolve the dual-engine video rendering core into a complete stand
 
 ```mermaid
 flowchart TD
-    M1["Stage 1: H.264 / HEVC / DV P5 / HLG ✅"] --> M2["Stage 2: Audio Pipeline ✅"]
+    M1["Stage 1: H.264 / HEVC / DV P5 / HLG ✅"] --> M15["Stage 1.5: Dolby Vision Profile 8/8.1 RPU Engine"]
+    M15 --> M2["Stage 2: Audio Pipeline ✅"]
     M2 --> M3["Stage 3: Network & Remote Streaming"]
     M3 --> M4["Stage 4: Subtitles Subsystem SRT/ASS"]
     M4 --> M5["Stage 5: WKWebView Bridge"]
     M5 --> M6["Stage 6: Desktop UI & UX Controls"]
     M6 --> M7["Stage 7: Standalone App Bundling & Release"]
-    M2 -.-> M15["Stage 2.5: AV1 Hybrid Engine M3+ HW / Dav1d SW"]
+    M2 -.-> M25["Stage 2.5: AV1 Hybrid Engine M3+ HW / Dav1d SW"]
 ```
 
 ---
@@ -51,6 +52,20 @@ flowchart TD
   - Rename `HEVCDemuxer` $\to$ `MediaDemuxer`.
   - Traverse all container streams, extracting audio metadata (`audioStreamIndex`, `audioTimebase`, `audioCodecId`, `audioChannels`, `audioSampleRate`).
   - Implement concurrent `audioQueue` with `nextAudioPacket()`: demux audio concurrently during video traversal, preserving unified disk I/O.
+
+---
+
+### Stage 1.5: Dynamic HDR & Dolby Vision Profile 8/8.1 RPU Engine
+> Full frame-by-frame dynamic metadata adaptation (SMPTE ST 2094-10) for Web-DL and UHD Blu-ray rips.
+
+- [ ] **1.5.1. DOVI RPU Extraction (FFmpeg / NAL SEI Prefix):**
+  - Detect and extract Dolby Vision RPU bitstream (`AV_PKT_DATA_DOVI_CONF` side data or `NAL_UNSPEC62` NAL units).
+  - Parse Dolby Vision Level 1 (L1) dynamic metadata: frame-accurate `min_pq`, `max_pq`, and `avg_pq`.
+- [ ] **1.5.2. Adaptive Scene-by-Scene Tone Mapping:**
+  - Forward dynamic L1 target parameters with frame PTS through `FrameQueue`.
+  - Feed dynamic shot peak luminance directly into `HDRToneMapping.metal`, adjusting EETF kneepoints on the fly (retaining shadow details in dark scenes without blowing out highlights).
+- [ ] **1.5.3. Hybrid Profile Detection:**
+  - Distinguish Profile 5 (native ICtCp colorspace) vs Profile 8/8.1 (standard BT.2020 YCbCr base layer + dynamic RPU metadata) vs Profile 7 (FEL/MEL fallback to HDR10/BL).
 
 ---
 

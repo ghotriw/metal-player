@@ -1,36 +1,46 @@
-# MetalPlayer
+# <img src="docs/logo.svg" width="40" height="40" valign="bottom" /> MetalPlayer
 
-High-performance macOS media player powered by Metal and VideoToolbox with custom HDR tone mapping.
+A video player for macOS built on VideoToolbox, AVSampleBufferDisplayLayer, and Metal.
 
-![MetalPlayer](docs/screenshot.webp)
+> [!WARNING]
+> **Status: pre-alpha.** Not ready for everyday use. Network streaming, subtitles, and standalone packaging are not implemented yet.
 
-## Features
+## Roadmap
 
-- **Dual-Engine Rendering**: Direct `AVSampleBufferDisplayLayer` for Apple XDR displays; Metal compute pipeline (BT.2390 EETF tone mapping) for SDR and external displays.
-- **HDR Standards**: HDR10, HLG, and Dolby Vision.
-- **Hardware Decoding**: VideoToolbox acceleration for HEVC (10-bit) and H.264.
-- **Spatial Audio & Multichannel**: 5.1/7.1 multichannel output, Apple Spatial Audio.
-<!--- **macOS Integration**: Native window lifecycle, standard keyboard shortcuts, and Control Center integration.-->
+- [x] Rendering: Apple HDR passthrough and Metal BT.2390 EETF tone mapping
+- [x] Video: HEVC 10-bit, H.264 8/10-bit, Dolby Vision Profile 5, HLG
+- [x] Audio: master clock sync, multiple PCM tracks, Spatial Audio, 5.1/7.1
+- [x] Diagnostics overlay: CPU/RAM, A/V drift, queue levels
+- [ ] Dolby Vision Profile 8/8.1 RPU processing (per-frame L1 metadata)
+- [ ] AV1 (VideoToolbox on M3 and later, `dav1d` on M1/M2)
+- [ ] HTTP/HTTPS streaming with auth headers (Emby/Jellyfin)
+- [ ] Subtitles: embedded and external SRT, WebVTT, ASS
+- [ ] Auto-hide cursor in fullscreen, more keyboard shortcuts
+- [ ] Embedding the video view in a WKWebView-based client
+- [ ] Bundling FFmpeg dylibs into the app
+
+Details: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Requirements
 
-- macOS 15.0 (Sequoia) or later
+- macOS 15+
 - Apple Silicon
 - FFmpeg shared libraries (`brew install ffmpeg`)
 
-## Building & Running
+## Building
 
-Build and run via Swift Package Manager:
 ```bash
 swift build -c release
 ```
 
-Package into a signed macOS application bundle:
+Build a signed `.app` bundle and launch it:
+
 ```bash
 ./scripts/bundle_app.sh --run
 ```
 
-Run tests and code formatting:
+Tests and formatting check:
+
 ```bash
 swift test
 ./scripts/format.sh check
@@ -38,4 +48,4 @@ swift test
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+[MIT](LICENSE)
