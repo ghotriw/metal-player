@@ -41,10 +41,12 @@ public final class NativePlayerEngine: PlayerEngine {
     }
     public var isMetalLayerVisible: Bool = false {
         didSet {
+            let visible = isMetalLayerVisible
+            isMetalLayerVisibleLock.withLock { $0 = visible }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            metalRenderer?.metalLayer.isHidden = !isMetalLayerVisible
-            displayLayer.isHidden = isMetalLayerVisible
+            metalRenderer?.metalLayer.isHidden = !visible
+            displayLayer.isHidden = visible
             CATransaction.commit()
         }
     }
@@ -97,6 +99,10 @@ public final class NativePlayerEngine: PlayerEngine {
     private var timeObserver: Any?
     @ObservationIgnored
     private let isFeeding = OSAllocatedUnfairLock(initialState: false)
+    @ObservationIgnored
+    private let isMetalLayerVisibleLock = OSAllocatedUnfairLock(initialState: false)
+    @ObservationIgnored
+    private let isVideoDrainPaused = OSAllocatedUnfairLock(initialState: false)
 
     private let frameQueue = FrameQueue()
     private var displayLink: CADisplayLink?
@@ -199,7 +205,7 @@ public final class NativePlayerEngine: PlayerEngine {
         // If a screen is available on initialization, attach CADisplayLink to NSScreen.main
         if let screen = NSScreen.main {
             let link = screen.displayLink(target: target, selector: #selector(DisplayLinkTarget.onTick(_:)))
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 120, preferred: 120)
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 120, preferred: 60)
             link.add(to: .main, forMode: .common)
             link.isPaused = true
             self.displayLink = link
@@ -214,7 +220,7 @@ public final class NativePlayerEngine: PlayerEngine {
         self.displayLinkTarget = target
 
         let link = view.displayLink(target: target, selector: #selector(DisplayLinkTarget.onTick(_:)))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 120, preferred: 120)
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 120, preferred: 60)
         link.add(to: .main, forMode: .common)
         link.isPaused = !isPlaying
         self.displayLink = link
@@ -230,26 +236,73 @@ public final class NativePlayerEngine: PlayerEngine {
         case .metalToneMap:
             newMode = isToneMappingPermitted ? .metalToneMap : .system
         }
-        activeRenderModeLock.withLock { $0 = newMode }
+        let previousMode = activeRenderModeLock.withLock { mode -> RenderMode in
+            let prev = mode
+            mode = newMode
+            return prev
+        }
+
+        guard previousMode != newMode else { return }
 
         if newMode == .system {
             // Instant handover to Apple HDR: hide Metal layer immediately
             isMetalLayerVisible = false
-            // Clear frameQueue and flush decoder so obsolete frames are not left behind
             frameQueue.clear()
+
             let decoder = self.decoder
-            feedQueue.async {
-                decoder.flush()
+            let feedingActive = isFeeding.withLock { $0 }
+            if isPlaying || feedingActive {
+                // If currently playing, stop video feeding, flush displayLayer, and restart feeding for system mode
+                displayLayer.stopRequestingMediaData()
+                displayLayer.flush()
+                isVideoDrainPaused.withLock { $0 = false }
+                let demuxer = self.demuxer
+                feedQueue.async { [weak self] in
+                    decoder.flush()
+                    // Re-sync demuxer video packets with audio playhead
+                    if let self {
+                        let curTime = self.synchronizer.currentTime().seconds
+                        if curTime > 0 {
+                            demuxer?.seek(to: curTime)
+                        }
+                        DispatchQueue.main.async {
+                            guard self.isFeeding.withLock({ $0 }) else { return }
+                            self.startFeedingVideo()
+                        }
+                    }
+                }
+            } else {
+                feedQueue.async {
+                    decoder.flush()
+                }
             }
         } else {
-            // Switching to Metal: clean up any stale frames before receiving new ones
+            // Switching to Metal Tone Mapping
             frameQueue.clear()
-            // If paused, immediately render current frozen frame
-            if !isPlaying {
+            let feedingActive = isFeeding.withLock { $0 }
+            if isPlaying || feedingActive {
+                displayLayer.stopRequestingMediaData()
+                displayLayer.flush()
+                isVideoDrainPaused.withLock { $0 = false }
+                let demuxer = self.demuxer
+                let decoder = self.decoder
+                feedQueue.async { [weak self] in
+                    decoder.flush()
+                    if let self {
+                        let curTime = self.synchronizer.currentTime().seconds
+                        if curTime > 0 {
+                            demuxer?.seek(to: curTime)
+                        }
+                        DispatchQueue.main.async {
+                            guard self.isFeeding.withLock({ $0 }) else { return }
+                            self.startFeedingVideo()
+                        }
+                    }
+                }
+            } else {
                 renderCurrentFrame()
                 isMetalLayerVisible = true
             }
-            // If playing, keep displayLayer visible until first fresh frame pops in displayLinkTick
         }
     }
 
@@ -260,12 +313,17 @@ public final class NativePlayerEngine: PlayerEngine {
 
         if let buffer = frameQueue.popFrame(forSyncTime: currentSyncTime) {
             metalRenderer?.render(pixelBuffer: buffer)
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                if !self.isMetalLayerVisible {
-                    self.isMetalLayerVisible = true
+            if !isMetalLayerVisibleLock.withLock({ $0 }) {
+                isMetalLayerVisibleLock.withLock { $0 = true }
+                DispatchQueue.main.async { [weak self] in
+                    self?.isMetalLayerVisible = true
                 }
             }
+        }
+
+        // Backpressure check: if feeding was paused due to full frame buffer, resume when queue drops to <= 25 frames
+        if frameQueue.count <= 25 && isVideoDrainPaused.withLock({ $0 }) {
+            checkBackpressureAndResumeIfNeeded()
         }
     }
 
@@ -363,26 +421,50 @@ public final class NativePlayerEngine: PlayerEngine {
         }
     }
 
-    private func startFeeding() {
-        guard let demuxer = self.demuxer else { return }
-        isFeeding.withLock { $0 = true }
+    nonisolated private func checkBackpressureAndResumeIfNeeded() {
+        let shouldResume = isVideoDrainPaused.withLock { isPaused -> Bool in
+            if isPaused {
+                isPaused = false
+                return true
+            }
+            return false
+        }
+        guard shouldResume, isFeeding.withLock({ $0 }) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.isFeeding.withLock({ $0 }) else { return }
+            self.startFeedingVideo()
+        }
+    }
 
+    private func startFeeding() {
+        guard self.demuxer != nil else { return }
+        isFeeding.withLock { $0 = true }
+        isVideoDrainPaused.withLock { $0 = false }
+
+        startFeedingVideo()
+        startFeedingAudio()
+    }
+
+    private func startFeedingVideo() {
+        guard let demuxer = self.demuxer else { return }
         let feedingLock = self.isFeeding
+        let drainPausedLock = self.isVideoDrainPaused
         let modeLock = self.activeRenderModeLock
         nonisolated(unsafe) let layer = self.displayLayer
-        nonisolated(unsafe) let aRenderer = self.audioRenderer
 
         let sampleCountLock = OSAllocatedUnfairLock(initialState: 0)
         let decoder = self.decoder
         let queue = self.frameQueue
 
         // Video feed loop
-        displayLayer.requestMediaDataWhenReady(on: feedQueue) { [demuxer] in
+        displayLayer.requestMediaDataWhenReady(on: feedQueue) { [demuxer, queue] in
             while layer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
-                // Non-blocking backpressure: If Metal tone mapping is active and frameQueue already has >45 decoded frames (~1.8 seconds),
-                // yield from this requestMediaDataWhenReady iteration cooperatively to let CADisplayLink drain the queue.
-                // When frames are consumed or layer becomes ready again, the system or next tick will resume feeding.
-                if modeLock.withLock({ $0 == .metalToneMap }) && queue.count >= 45 {
+                // Cooperative backpressure: If Metal tone mapping is active and frameQueue already has >=40 decoded frames (~1.6 seconds),
+                // stop requesting media data from AVFoundation cleanly.
+                // Do NOT break while isReadyForMoreMediaData is true, as AVFoundation will immediately re-invoke this block in a 100% CPU spin-loop!
+                if modeLock.withLock({ $0 == .metalToneMap }) && queue.count >= 40 {
+                    drainPausedLock.withLock { $0 = true }
+                    layer.stopRequestingMediaData()
                     break
                 }
 
@@ -399,19 +481,27 @@ public final class NativePlayerEngine: PlayerEngine {
                         )
                     }
 
-                    // Feed hardware decoder only if Metal tone mapping is active
                     if modeLock.withLock({ $0 == .metalToneMap }) {
+                        // Decode via VTVideoDecoder for Metal tone-mapping.
+                        // Do NOT call layer.enqueue(sampleBuf)! AVSampleBufferDisplayLayer decodes frames even when hidden,
+                        // which causes 4K double-decoding and wastes 50-70% CPU.
                         decoder.decode(sampleBuffer: sampleBuf)
+                    } else {
+                        // Native mode: Feed displayLayer directly
+                        layer.enqueue(sampleBuf)
                     }
-
-                    // Feed displayLayer for timing/AVSampleBufferRenderSynchronizer
-                    layer.enqueue(sampleBuf)
                 } else {
                     print("[NativePlayerEngine] Demuxer returned nil.")
                     break
                 }
             }
         }
+    }
+
+    private func startFeedingAudio() {
+        guard let demuxer = self.demuxer else { return }
+        let feedingLock = self.isFeeding
+        nonisolated(unsafe) let aRenderer = self.audioRenderer
 
         // Audio feed loop
         // Let AVSampleBufferAudioRenderer manage its internal buffer backpressure via isReadyForMoreMediaData.
@@ -525,13 +615,17 @@ public final class NativePlayerEngine: PlayerEngine {
                     self.isPlaying = true
                 }
             } else {
+                let isMetalMode = self.activeRenderModeLock.withLock { $0 == .metalToneMap }
                 var attempts = 0
                 var foundTarget = false
                 while attempts < 120 && !foundTarget {
                     if let sample = demuxer.nextVideoSample() {
                         let pts = CMSampleBufferGetPresentationTimeStamp(sample)
-                        decoder.decode(sampleBuffer: sample)
-                        layer.enqueue(sample)
+                        if isMetalMode {
+                            decoder.decode(sampleBuffer: sample)
+                        } else {
+                            layer.enqueue(sample)
+                        }
                         attempts += 1
                         if CMTimeGetSeconds(pts) >= seconds {
                             foundTarget = true

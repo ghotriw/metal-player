@@ -102,6 +102,7 @@ public final class VTVideoDecoder: @unchecked Sendable {
             kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
             kCVPixelBufferMetalCompatibilityKey as String: true,
             kCVPixelBufferOpenGLCompatibilityKey as String: false,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:] as [String: Any],
         ]
 
         var callbackRecord = VTDecompressionOutputCallbackRecord(
@@ -125,11 +126,15 @@ public final class VTVideoDecoder: @unchecked Sendable {
             decompressionOutputRefCon: Unmanaged.passUnretained(self).toOpaque()
         )
 
+        let decoderSpecification: [String: Any] = [
+            kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder as String: true
+        ]
+
         var newSession: VTDecompressionSession?
         let status = VTDecompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             formatDescription: formatDescription,
-            decoderSpecification: nil,
+            decoderSpecification: decoderSpecification as CFDictionary,
             imageBufferAttributes: destinationImageBufferAttributes as CFDictionary,
             outputCallback: &callbackRecord,
             decompressionSessionOut: &newSession
