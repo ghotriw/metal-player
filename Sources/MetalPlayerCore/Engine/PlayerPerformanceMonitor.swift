@@ -50,7 +50,8 @@ public final class PlayerPerformanceMonitor: @unchecked Sendable {
     // FPS calculation tracking
     private let fpsLock = OSAllocatedUnfairLock(initialState: (frameCount: 0, lastTimestamp: CACurrentMediaTime()))
     // Native feed rate calculation tracking
-    private let nativeRateLock = OSAllocatedUnfairLock(initialState: (sampleCount: 0, totalCount: 0, lastTimestamp: CACurrentMediaTime()))
+    private let nativeRateLock = OSAllocatedUnfairLock(
+        initialState: (sampleCount: 0, totalCount: 0, lastTimestamp: CACurrentMediaTime()))
 
     // Mach timebase info for duration measurements
     private var timebaseInfo = mach_timebase_info()

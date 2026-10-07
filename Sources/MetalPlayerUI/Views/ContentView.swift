@@ -97,12 +97,15 @@ public struct ContentView: View {
             }
             return .handled
         }
-        .onKeyPress(KeyEquivalent("i"), action: {
-            withAnimation {
-                engine.showDebugHUD.toggle()
+        .onKeyPress(
+            KeyEquivalent("i"),
+            action: {
+                withAnimation {
+                    engine.showDebugHUD.toggle()
+                }
+                return .handled
             }
-            return .handled
-        })
+        )
         .onKeyPress(.leftArrow) {
             engine.seekRelative(by: -5)
             showControlsTemporarily()

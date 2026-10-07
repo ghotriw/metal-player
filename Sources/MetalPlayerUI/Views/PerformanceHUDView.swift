@@ -68,7 +68,8 @@ public struct PerformanceHUDView: View {
                 metricRow(
                     label: "A/V Sync Drift:",
                     value: String(format: "%+.1f ms", metrics.avSyncDriftMs),
-                    color: abs(metrics.avSyncDriftMs) > 100 ? .red : (abs(metrics.avSyncDriftMs) > 60 ? .orange : .white)
+                    color: abs(metrics.avSyncDriftMs) > 100
+                        ? .red : (abs(metrics.avSyncDriftMs) > 60 ? .orange : .white)
                 )
             } else {
                 metricRow(

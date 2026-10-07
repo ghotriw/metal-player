@@ -442,12 +442,20 @@ public final class NativePlayerEngine: PlayerEngine {
         // Update telemetry metadata
         let primariesStr: String = {
             if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 { return "BT.709" }
-            if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3 || newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65 { return "DCI-P3" }
+            if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3
+                || newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65
+            {
+                return "DCI-P3"
+            }
             return "BT.2020"
         }()
         let transferStr: String = {
             if newDemuxer.isDolbyVisionProfile5 { return "Dolby Vision (ICtCp)" }
-            if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2 || newDemuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma { return "BT.709 / SDR" }
+            if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2
+                || newDemuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma
+            {
+                return "BT.709 / SDR"
+            }
             if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG { return "HLG" }
             return "PQ (ST 2084)"
         }()
@@ -565,13 +573,15 @@ public final class NativePlayerEngine: PlayerEngine {
                         // Do NOT call layer.enqueue(sampleBuf)! AVSampleBufferDisplayLayer decodes frames even when hidden,
                         // which causes 4K double-decoding and wastes 50-70% CPU.
                         let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
-                        let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval("EnqueueDecodeFrame", id: signpostID)
+                        let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
+                            "EnqueueDecodeFrame", id: signpostID)
                         decoder.decode(sampleBuffer: sampleBuf)
                         PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueDecodeFrame", interval)
                     } else {
                         // Native mode: Feed displayLayer directly
                         let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
-                        let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval("EnqueueNativeSample", id: signpostID)
+                        let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
+                            "EnqueueNativeSample", id: signpostID)
                         layer.enqueue(sampleBuf)
                         PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueNativeSample", interval)
                         PlayerPerformanceMonitor.shared.recordNativeEnqueuedSample()
