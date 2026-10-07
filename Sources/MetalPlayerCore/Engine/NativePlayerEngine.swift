@@ -379,11 +379,11 @@ public final class NativePlayerEngine: PlayerEngine {
         // Video feed loop
         displayLayer.requestMediaDataWhenReady(on: feedQueue) { [demuxer] in
             while layer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
-                // Backpressure: If Metal tone mapping is active and frameQueue already has >45 decoded frames (~1.8 seconds),
-                // yield feedQueue briefly to let CADisplayLink drain the queue and prevent buffer exhaustion.
+                // Non-blocking backpressure: If Metal tone mapping is active and frameQueue already has >45 decoded frames (~1.8 seconds),
+                // yield from this requestMediaDataWhenReady iteration cooperatively to let CADisplayLink drain the queue.
+                // When frames are consumed or layer becomes ready again, the system or next tick will resume feeding.
                 if modeLock.withLock({ $0 == .metalToneMap }) && queue.count >= 45 {
-                    Thread.sleep(forTimeInterval: 0.010)
-                    if !feedingLock.withLock({ $0 }) { break }
+                    break
                 }
 
                 if let sample = demuxer.nextVideoSample() {
@@ -454,10 +454,8 @@ public final class NativePlayerEngine: PlayerEngine {
         let wasPlaying = isPlaying
         pause()
 
-        // Stop requesting data and wait for audioFeedQueue to finish executing any in-flight block
+        // Stop requesting data and flush renderers
         audioRenderer.stopRequestingMediaData()
-        audioFeedQueue.sync {}
-
         audioRenderer.flush()
         audioDecoder?.flush()
 

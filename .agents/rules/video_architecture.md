@@ -104,15 +104,29 @@ To support embedding into host applications with web-driven frontends (e.g., `WK
   - Must explicitly configure `preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 120, preferred: 120)` to natively adapt to ProMotion and variable refresh rates without frame drops or jitter.
   - Pacing lifecycle is managed via `.isPaused` and cleanly destroyed via `.invalidate()`.
 
-### 3.4. Thread Safety & Swift Concurrency
-- `MetalVideoRenderer` is isolated using `renderLock: NSLock` (synchronizing draw calls across display link and UI frame invalidation) and `OSAllocatedUnfairLock` (protecting `ToneMapUniforms`).
-- Both `ToneMapUniforms` and `RenderMode` must conform to `Sendable`.
-- `activeRenderMode` must be held behind an `OSAllocatedUnfairLock` and exposed as `nonisolated` to allow the display link to query the mode without actor hops or priority inversions.
-- Any UI state changes originating from the display link loop (such as `isMetalLayerVisible`) must be isolated cleanly on `@MainActor`.
+### 3.4. Thread Safety, Locks & Backpressure Model
+- **Strict Prohibition of `NSLock` and `Thread.sleep`:**
+  - Traditional Objective-C `NSLock` is strictly prohibited. All synchronous mutual exclusions must use native Apple Silicon `OSAllocatedUnfairLock` from the `os` module (`OSAllocatedUnfairLock()`).
+  - Blocking dispatch worker threads via `Thread.sleep` is strictly prohibited to prevent GCD thread pool starvation.
+  - Video and audio backpressure inside `requestMediaDataWhenReady` must be cooperative and non-blocking: when queues or lead-time thresholds are exceeded, the block immediately breaks/exits. Work resumes naturally when buffers are consumed or the hardware signals readiness.
+- **Locking & Concurrency Standards:**
+  - `MetalVideoRenderer` uses `renderLock: OSAllocatedUnfairLock` (synchronizing draw calls across display link and UI frame invalidation) and `OSAllocatedUnfairLock(initialState: ToneMapUniforms())`.
+  - `FrameQueue` protects the internal decoded frame array and last rendered buffer via `OSAllocatedUnfairLock()`.
+  - Both `ToneMapUniforms` and `RenderMode` must conform to `Sendable`.
+  - `activeRenderMode` must be held behind an `OSAllocatedUnfairLock` and exposed as `nonisolated` to allow the display link to query the mode without actor hops or priority inversions.
+  - Any UI state changes originating from the display link loop (such as `isMetalLayerVisible`) must be isolated cleanly on `@MainActor`.
 
-### 3.5. Pause Frame Accuracy
-- `FrameQueue` preserves the most recently displayed buffer in `lastRenderedBuffer: CVPixelBuffer?`.
-- Mode switching or scrubbing while paused invokes `renderCurrentFrame()`, which re-renders the frozen buffer to guarantee frame-accurate parity without time drift.
+### 3.5. Sorted Priority Ring Buffer Architecture (`FrameQueue`)
+- **Zero Heap Reallocation & Fixed Capacity:** `FrameQueue` is implemented as a fixed-capacity pre-allocated circular ring buffer (`[DecodedFrame?]`), avoiding memory fragmentation and allocations during playback.
+- **O(1) Pop & Instant `IOSurface` Deallocation:**
+  - Fast head pointer advancement (`head = (head + 1) % capacity`) in $O(1)$.
+  - The vacated slot must be immediately set to `nil` (`buffer[head] = nil`). Because `CVPixelBuffer` encapsulates hardware `IOSurface` backing memory in VRAM, failing to nil the reference would keep the buffer alive until a full ring rotation, starving the hardware decoding pool in `VTDecompressionSession`.
+- **Strict PTS Ordering & B-Frame Handling:**
+  - Out-of-order B-frames emitted by `VTDecompressionSession` must never be appended blindly.
+  - Fast path ($O(1)$): Frames with monotonically increasing PTS (`frame.pts >= lastFrame.pts`) append directly to `tail`.
+  - B-frame path ($O(\log N)$): Out-of-order frames are inserted via binary search, shifting only the local slice of 1–3 affected slots.
+- **Pause Frame Parity:**
+  - Preserves the most recently displayed buffer in `lastRenderedBuffer: CVPixelBuffer?`. Mode switching or scrubbing while paused invokes `renderCurrentFrame()`, re-rendering the frozen buffer for zero-drift parity.
 
 ---
 

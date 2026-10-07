@@ -125,4 +125,41 @@ struct FrameQueueTests {
         let popped = queue.popFrame(forSyncTime: CMTime(seconds: 1.0, preferredTimescale: 1000))
         #expect(popped === firstBuffer)
     }
+
+    @Test("Ring buffer handles wrap-around cycles and complex B-frame out-of-order bursts")
+    func testRingBufferWrapAroundAndBFrames() {
+        let queue = FrameQueue(capacity: 10)
+
+        // Run multiple cycles to force head/tail index wrap-around past capacity
+        for cycle in 0..<5 {
+            let baseSeconds = Double(cycle * 10)
+            // Push frames: [base + 0, base + 2 (P-frame), base + 1 (B-frame), base + 4 (P-frame), base + 3 (B-frame)]
+            let ptsOrder = [0.0, 2.0, 1.0, 4.0, 3.0]
+            var buffers: [Double: CVPixelBuffer] = [:]
+
+            for offset in ptsOrder {
+                let buf = createDummyPixelBuffer()
+                let ptsSec = baseSeconds + offset
+                buffers[ptsSec] = buf
+                queue.push(
+                    VTVideoDecoder.DecodedFrame(
+                        pixelBuffer: buf,
+                        pts: CMTime(seconds: ptsSec, preferredTimescale: 1000),
+                        duration: CMTime(value: 41, timescale: 1000)
+                    )
+                )
+            }
+
+            #expect(queue.count == 5)
+
+            // Verify popped sequence is strictly sorted: 0.0, 1.0, 2.0, 3.0, 4.0
+            let expectedOffsets = [0.0, 1.0, 2.0, 3.0, 4.0]
+            for offset in expectedOffsets {
+                let ptsSec = baseSeconds + offset
+                let popped = queue.popFrame(forSyncTime: CMTime(seconds: ptsSec, preferredTimescale: 1000))
+                #expect(popped === buffers[ptsSec])
+            }
+            #expect(queue.count == 0)
+        }
+    }
 }

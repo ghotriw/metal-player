@@ -30,9 +30,7 @@ public struct ControlsOverlay: View {
             // 78pt leading padding clears the three traffic lights (close, minimize, zoom)
             .padding(.leading, 78)
             .padding(.trailing, 20)
-            .background(
-                NativeVisualEffectView(material: .titlebar, blendingMode: .withinWindow)
-            )
+            .background(.ultraThinMaterial)
             .overlay(alignment: .bottom) {
                 Rectangle()
                     .fill(Color(NSColor.separatorColor))
@@ -223,9 +221,7 @@ public struct ControlsOverlay: View {
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
-            .background(
-                NativeVisualEffectView(material: .titlebar, blendingMode: .withinWindow)
-            )
+            .background(.ultraThinMaterial)
             .overlay(alignment: .top) {
                 Rectangle()
                     .fill(Color(NSColor.separatorColor))

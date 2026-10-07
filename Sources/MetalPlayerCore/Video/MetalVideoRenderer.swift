@@ -60,7 +60,7 @@ public final class MetalVideoRenderer: @unchecked Sendable {
     private let commandQueue: MTLCommandQueue
     private var pipelineState: MTLRenderPipelineState?
     private var textureCache: CVMetalTextureCache?
-    private let renderLock = NSLock()
+    private let renderLock = OSAllocatedUnfairLock()
     private let uniformsLock = OSAllocatedUnfairLock(initialState: ToneMapUniforms())
 
     public var uniforms: ToneMapUniforms {
