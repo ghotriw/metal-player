@@ -1,7 +1,7 @@
-import Foundation
-import CoreMedia
 import AudioToolbox
 import CFFmpeg
+import CoreMedia
+import Foundation
 import os
 
 /// Decodes audio packets using FFmpeg libavcodec and resamples via libswresample
@@ -54,10 +54,10 @@ public final class FFAudioDecoder: @unchecked Sendable {
         let srcChannels = ctx.pointee.ch_layout.nb_channels
         if srcChannels >= 8 {
             self.targetChannels = 8
-            self.channelLayoutTag = kAudioChannelLayoutTag_AudioUnit_7_1 // L R C LFE Ls Rs Rls Rrs
+            self.channelLayoutTag = kAudioChannelLayoutTag_AudioUnit_7_1  // L R C LFE Ls Rs Rls Rrs
         } else if srcChannels >= 6 {
             self.targetChannels = 6
-            self.channelLayoutTag = kAudioChannelLayoutTag_AudioUnit_5_1 // L R C LFE Ls Rs (SMPTE standard)
+            self.channelLayoutTag = kAudioChannelLayoutTag_AudioUnit_5_1  // L R C LFE Ls Rs (SMPTE standard)
         } else {
             self.targetChannels = 2
             self.channelLayoutTag = kAudioChannelLayoutTag_Stereo
@@ -78,7 +78,7 @@ public final class FFAudioDecoder: @unchecked Sendable {
         // Standard macOS CoreAudio PCM format: 48kHz, Float32 Linear PCM.
         // For Spatial Audio, CoreAudio requires an explicit AudioChannelLayout
         // matching the multi-channel arrangement (5.1 or 7.1).
-        let bytesPerFrame = UInt32(targetChannels * 4) // 4 bytes per Float32
+        let bytesPerFrame = UInt32(targetChannels * 4)  // 4 bytes per Float32
         var asbd = AudioStreamBasicDescription(
             mSampleRate: Float64(targetSampleRate),
             mFormatID: kAudioFormatLinearPCM,
@@ -110,7 +110,9 @@ public final class FFAudioDecoder: @unchecked Sendable {
 
         if status == noErr {
             self.audioFormatDescription = formatDesc
-            print("[FFAudioDecoder] Created CMAudioFormatDescription: \(targetChannels)ch @ 48kHz, tag: \(channelLayoutTag)")
+            print(
+                "[FFAudioDecoder] Created CMAudioFormatDescription: \(targetChannels)ch @ 48kHz, tag: \(channelLayoutTag)"
+            )
         } else {
             print("[FFAudioDecoder] Failed to create CMAudioFormatDescription: \(status)")
         }
@@ -127,7 +129,7 @@ public final class FFAudioDecoder: @unchecked Sendable {
         let ret = swr_alloc_set_opts2(
             &newSwr,
             &outChLayout,
-            AV_SAMPLE_FMT_FLT, // Interleaved Float32
+            AV_SAMPLE_FMT_FLT,  // Interleaved Float32
             targetSampleRate,
             &inChLayout,
             AVSampleFormat(rawValue: srcFrame.pointee.format),
@@ -156,7 +158,8 @@ public final class FFAudioDecoder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        guard let ctx = codecCtx, let avFrame = frame, let avPkt = packet, let formatDesc = audioFormatDescription else {
+        guard let ctx = codecCtx, let avFrame = frame, let avPkt = packet, let formatDesc = audioFormatDescription
+        else {
             return []
         }
 
@@ -193,7 +196,7 @@ public final class FFAudioDecoder: @unchecked Sendable {
 
             // Estimate out sample count
             let maxOutSamples = swr_get_out_samples(swr, avFrame.pointee.nb_samples)
-            let outBufferSize = Int(maxOutSamples * targetChannels * 4) // 4 bytes per float
+            let outBufferSize = Int(maxOutSamples * targetChannels * 4)  // 4 bytes per float
             guard let outData = malloc(outBufferSize) else { continue }
 
             var outPtr: UnsafeMutablePointer<UInt8>? = outData.assumingMemoryBound(to: UInt8.self)

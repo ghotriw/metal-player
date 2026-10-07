@@ -1,7 +1,7 @@
 import AppKit
-import SwiftUI
 import MetalPlayerCore
 import MetalPlayerUI
+import SwiftUI
 
 @MainActor
 final class PlayerWindowController: NSWindowController, NSWindowDelegate {

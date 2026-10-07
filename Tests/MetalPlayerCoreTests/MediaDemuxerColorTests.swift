@@ -1,6 +1,7 @@
-import Testing
 import CoreMedia
 import CoreVideo
+import Testing
+
 @testable import MetalPlayerCore
 
 @Suite("MediaDemuxer Dynamic Color Metadata Tests")
@@ -48,7 +49,8 @@ struct MediaDemuxerColorTests {
 
         // Test conversion to HVCC format (4-byte big-endian length prefix)
         let (hvccData, count) = streamData.withUnsafeBytes { raw in
-            MediaDemuxer.packetDataToHVCC(pktData: raw.baseAddress!.assumingMemoryBound(to: UInt8.self), count: streamData.count)
+            MediaDemuxer.packetDataToHVCC(
+                pktData: raw.baseAddress!.assumingMemoryBound(to: UInt8.self), count: streamData.count)
         }
         #expect(count > 0)
         #expect(hvccData.count == count)
@@ -63,12 +65,13 @@ struct MediaDemuxerColorTests {
         // H.264 SPS: start code (0x00000001) + NAL header (0x67 = type 7, forbidden=0, ref_idc=3) + baseline 640x360 payload
         let spsBytes: [UInt8] = [
             0x00, 0x00, 0x00, 0x01,
-            0x67, 0x42, 0xC0, 0x1E, 0xDA, 0x01, 0x40, 0x16, 0xE8, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00, 0x0C, 0x83, 0xC5, 0x8B, 0x67, 0x80
+            0x67, 0x42, 0xC0, 0x1E, 0xDA, 0x01, 0x40, 0x16, 0xE8, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00, 0x0C,
+            0x83, 0xC5, 0x8B, 0x67, 0x80,
         ]
         // H.264 PPS: start code (0x00000001) + NAL header (0x68 = type 8, forbidden=0, ref_idc=3) + payload
         let ppsBytes: [UInt8] = [
             0x00, 0x00, 0x00, 0x01,
-            0x68, 0xCE, 0x3C, 0x80
+            0x68, 0xCE, 0x3C, 0x80,
         ]
 
         var streamData = Data()
@@ -77,8 +80,8 @@ struct MediaDemuxerColorTests {
 
         let nalus = MediaDemuxer.extractNALUnits(from: streamData)
         #expect(nalus.count == 2)
-        #expect(nalus[0][0] & 0x1F == 7) // SPS
-        #expect(nalus[1][0] & 0x1F == 8) // PPS
+        #expect(nalus[0][0] & 0x1F == 7)  // SPS
+        #expect(nalus[1][0] & 0x1F == 8)  // PPS
 
         // Verify CMVideoFormatDescriptionCreateFromH264ParameterSets succeeds with these parameters
         var formatDesc: CMVideoFormatDescription?
@@ -89,7 +92,7 @@ struct MediaDemuxerColorTests {
             ppsData.withUnsafeBytes { ppsBuf in
                 let pointers: [UnsafePointer<UInt8>] = [
                     spsBuf.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                    ppsBuf.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                    ppsBuf.baseAddress!.assumingMemoryBound(to: UInt8.self),
                 ]
                 let sizes: [Int] = [spsData.count, ppsData.count]
                 let status = CMVideoFormatDescriptionCreateFromH264ParameterSets(
@@ -124,16 +127,17 @@ struct MediaDemuxerColorTests {
         // [32..33] ppsLength = 4
         // [34..37] ppsData
         let spsBytes: [UInt8] = [
-            0x67, 0x42, 0xC0, 0x1E, 0xDA, 0x01, 0x40, 0x16, 0xE8, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00, 0x0C, 0x83, 0xC5, 0x8B, 0x67, 0x80
+            0x67, 0x42, 0xC0, 0x1E, 0xDA, 0x01, 0x40, 0x16, 0xE8, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00, 0x0C,
+            0x83, 0xC5, 0x8B, 0x67, 0x80,
         ]
         let ppsBytes: [UInt8] = [
-            0x68, 0xCE, 0x3C, 0x80
+            0x68, 0xCE, 0x3C, 0x80,
         ]
 
         var avcC = Data([1, 0x42, 0xC0, 0x1E, 0xFF, 0xE1])
         avcC.append(contentsOf: [UInt8(spsBytes.count >> 8), UInt8(spsBytes.count & 0xFF)])
         avcC.append(contentsOf: spsBytes)
-        avcC.append(1) // 1 PPS
+        avcC.append(1)  // 1 PPS
         avcC.append(contentsOf: [UInt8(ppsBytes.count >> 8), UInt8(ppsBytes.count & 0xFF)])
         avcC.append(contentsOf: ppsBytes)
 
@@ -167,17 +171,19 @@ struct MediaDemuxerColorTests {
         // Profile 5 byte: (5 << 1) = 10 (0x0A)
         var dvvCBox = Data()
         // Prefix padding
-        dvvCBox.append(contentsOf: [0x00, 0x00, 0x00, 0x18]) // box size 24
-        dvvCBox.append(contentsOf: [0x64, 0x76, 0x76, 0x43]) // 'dvvC'
-        dvvCBox.append(contentsOf: [0x01, 0x00])             // version 1.0
-        dvvCBox.append(contentsOf: [0x0A, 0x00])             // profile 5: (5 << 1) = 0x0A
-        dvvCBox.append(contentsOf: Array(repeating: UInt8(0), count: 12)) // remaining box bytes
+        dvvCBox.append(contentsOf: [0x00, 0x00, 0x00, 0x18])  // box size 24
+        dvvCBox.append(contentsOf: [0x64, 0x76, 0x76, 0x43])  // 'dvvC'
+        dvvCBox.append(contentsOf: [0x01, 0x00])  // version 1.0
+        dvvCBox.append(contentsOf: [0x0A, 0x00])  // profile 5: (5 << 1) = 0x0A
+        dvvCBox.append(contentsOf: Array(repeating: UInt8(0), count: 12))  // remaining box bytes
 
         var detectedProfile5 = false
         dvvCBox.withUnsafeBytes { raw in
             let extraBytes = raw.bindMemory(to: UInt8.self)
             for i in 0..<(extraBytes.count - 8) {
-                if (extraBytes[i] == 0x64 && extraBytes[i+1] == 0x76 && extraBytes[i+2] == 0x76 && extraBytes[i+3] == 0x43) {
+                if extraBytes[i] == 0x64 && extraBytes[i + 1] == 0x76 && extraBytes[i + 2] == 0x76
+                    && extraBytes[i + 3] == 0x43
+                {
                     let dvProfile = (extraBytes[i + 6] >> 1) & 0x7F
                     if dvProfile == 5 {
                         detectedProfile5 = true

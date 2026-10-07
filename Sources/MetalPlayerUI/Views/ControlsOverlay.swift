@@ -1,6 +1,6 @@
-import SwiftUI
 import AppKit
 import MetalPlayerCore
+import SwiftUI
 
 public struct ControlsOverlay: View {
     @Bindable var engine: NativePlayerEngine
@@ -155,9 +155,13 @@ public struct ControlsOverlay: View {
                     Button {
                         engine.isMuted.toggle()
                     } label: {
-                        Image(systemName: engine.isMuted || engine.volume == 0 ? "speaker.slash.fill" : (engine.volume < 0.5 ? "speaker.wave.1.fill" : "speaker.wave.2.fill"))
-                            .font(.system(size: 14))
-                            .foregroundStyle(.white.opacity(0.85))
+                        Image(
+                            systemName: engine.isMuted || engine.volume == 0
+                                ? "speaker.slash.fill"
+                                : (engine.volume < 0.5 ? "speaker.wave.1.fill" : "speaker.wave.2.fill")
+                        )
+                        .font(.system(size: 14))
+                        .foregroundStyle(.white.opacity(0.85))
                     }
                     .buttonStyle(.plain)
 
@@ -184,7 +188,10 @@ public struct ControlsOverlay: View {
                         Button {
                             engine.renderMode = mode
                         } label: {
-                            let title = (mode == .auto) ? "Auto (\(engine.activeRenderMode == .system ? "Apple HDR" : "Metal SDR"))" : mode.rawValue
+                            let title =
+                                (mode == .auto)
+                                ? "Auto (\(engine.activeRenderMode == .system ? "Apple HDR" : "Metal SDR"))"
+                                : mode.rawValue
                             let isSelected = (engine.renderMode == mode)
                             Text("\(isSelected ? "✓ " : "    ")\(title)")
                         }
@@ -203,7 +210,9 @@ public struct ControlsOverlay: View {
                 } label: {
                     Text(engine.activeRenderMode == .system ? "HDR" : "SDR")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundStyle(engine.activeRenderMode == .system ? Color.accentColor : Color.white.opacity(0.85))
+                        .foregroundStyle(
+                            engine.activeRenderMode == .system ? Color.accentColor : Color.white.opacity(0.85)
+                        )
                         .padding(.horizontal, 4)
                         .padding(.vertical, 2)
                 }

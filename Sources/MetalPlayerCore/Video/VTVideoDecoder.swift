@@ -1,5 +1,5 @@
-import Foundation
 import CoreMedia
+import Foundation
 import VideoToolbox
 import os
 
@@ -43,8 +43,10 @@ public final class VTVideoDecoder: @unchecked Sendable {
 
         // Check if sample has kCMSampleAttachmentKey_DoNotDisplay
         var doNotDisplay = false
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [NSDictionary],
-           let first = attachments.first {
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+            as? [NSDictionary],
+            let first = attachments.first
+        {
             if let val = first[kCMSampleAttachmentKey_DoNotDisplay] as? Bool {
                 doNotDisplay = val
             }
@@ -81,26 +83,33 @@ public final class VTVideoDecoder: @unchecked Sendable {
         let depth = (extensions?[kCMFormatDescriptionExtension_Depth as String] as? NSNumber)?.intValue ?? 24
         let transfer = extensions?[kCVImageBufferTransferFunctionKey as String] as? String
 
-        let is10Bit = depth > 24 ||
-                      transfer == (kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String) ||
-                      transfer == (kCVImageBufferTransferFunction_ITU_R_2100_HLG as String) ||
-                      mediaSubType == kCMVideoCodecType_HEVC ||
-                      mediaSubType == kCMVideoCodecType_HEVCWithAlpha
+        let is10Bit =
+            depth > 24 || transfer == (kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String)
+            || transfer == (kCVImageBufferTransferFunction_ITU_R_2100_HLG as String)
+            || mediaSubType == kCMVideoCodecType_HEVC || mediaSubType == kCMVideoCodecType_HEVCWithAlpha
 
         if is10Bit {
-            pixelFormat = isFullRange ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+            pixelFormat =
+                isFullRange
+                ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
         } else {
-            pixelFormat = isFullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            pixelFormat =
+                isFullRange
+                ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         }
 
         let destinationImageBufferAttributes: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: pixelFormat,
             kCVPixelBufferMetalCompatibilityKey as String: true,
-            kCVPixelBufferOpenGLCompatibilityKey as String: false
+            kCVPixelBufferOpenGLCompatibilityKey as String: false,
         ]
 
         var callbackRecord = VTDecompressionOutputCallbackRecord(
-            decompressionOutputCallback: { (decompressionOutputRefCon, sourceFrameRefCon, status, infoFlags, imageBuffer, presentationTimeStamp, presentationDuration) in
+            decompressionOutputCallback: {
+                (
+                    decompressionOutputRefCon, sourceFrameRefCon, status, infoFlags, imageBuffer, presentationTimeStamp,
+                    presentationDuration
+                ) in
                 guard status == noErr, let imageBuffer else { return }
                 guard let refCon = decompressionOutputRefCon else { return }
                 let decoder = Unmanaged<VTVideoDecoder>.fromOpaque(refCon).takeUnretainedValue()

@@ -1,5 +1,5 @@
-import Foundation
 import CoreMedia
+import Foundation
 
 public enum VideoCodec: String, Sendable {
     case hevc = "HEVC / H.265"

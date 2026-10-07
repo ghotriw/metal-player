@@ -1,7 +1,8 @@
-import Testing
-import CoreMedia
 import AudioToolbox
 import CFFmpeg
+import CoreMedia
+import Testing
+
 @testable import MetalPlayerCore
 
 @Suite("Audio Pipeline & FFAudioDecoder Tests")
@@ -38,7 +39,8 @@ struct AudioPipelineTests {
         }
 
         guard let demuxer = MediaDemuxer(url: referencePath),
-              let codecParams = demuxer.getAudioCodecParameters() else {
+            let codecParams = demuxer.getAudioCodecParameters()
+        else {
             Issue.record("Failed to initialize demuxer or get audio parameters")
             return
         }
@@ -49,7 +51,7 @@ struct AudioPipelineTests {
         }
 
         #expect(decoder.targetSampleRate == 48000)
-        #expect(decoder.targetChannels == 6) // Reference video has 5.1 (6 channels)
+        #expect(decoder.targetChannels == 6)  // Reference video has 5.1 (6 channels)
         #expect(decoder.channelLayoutTag == kAudioChannelLayoutTag_AudioUnit_5_1)
 
         // Read up to 20 audio packets and decode

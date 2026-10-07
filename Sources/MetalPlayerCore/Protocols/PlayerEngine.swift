@@ -1,6 +1,6 @@
-import Foundation
-import CoreMedia
 import AppKit
+import CoreMedia
+import Foundation
 
 public enum RenderMode: String, CaseIterable, Identifiable, Sendable {
     case auto = "Auto (Display Adaptive)"

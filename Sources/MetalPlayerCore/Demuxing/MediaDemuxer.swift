@@ -1,7 +1,7 @@
-import Foundation
-import CoreMedia
-import VideoToolbox
 import CFFmpeg
+import CoreMedia
+import Foundation
+import VideoToolbox
 
 public final class MediaDemuxer: @unchecked Sendable {
     private var formatCtx: UnsafeMutablePointer<AVFormatContext>?
@@ -113,8 +113,9 @@ public final class MediaDemuxer: @unchecked Sendable {
         for i in 0..<Int(formatCtx.pointee.nb_streams) {
             let stream = formatCtx.pointee.streams[i]!
             let codecId = stream.pointee.codecpar.pointee.codec_id
-            if stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_VIDEO &&
-               (codecId == AV_CODEC_ID_HEVC || codecId == AV_CODEC_ID_H264) {
+            if stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_VIDEO
+                && (codecId == AV_CODEC_ID_HEVC || codecId == AV_CODEC_ID_H264)
+            {
                 self.videoStreamIndex = i
                 self.timebase = stream.pointee.time_base
                 self.codec = (codecId == AV_CODEC_ID_HEVC) ? .hevc : .h264
@@ -127,7 +128,9 @@ public final class MediaDemuxer: @unchecked Sendable {
                 }
 
                 // Dynamically map color primaries
-                if let primaries = CVColorPrimariesGetStringForIntegerCodePoint(Int32(stream.pointee.codecpar.pointee.color_primaries.rawValue)) {
+                if let primaries = CVColorPrimariesGetStringForIntegerCodePoint(
+                    Int32(stream.pointee.codecpar.pointee.color_primaries.rawValue))
+                {
                     self.colorPrimaries = primaries.takeUnretainedValue()
                 } else {
                     switch stream.pointee.codecpar.pointee.color_primaries {
@@ -145,7 +148,9 @@ public final class MediaDemuxer: @unchecked Sendable {
                 }
 
                 // Dynamically map transfer characteristics (TRC)
-                if let trc = CVTransferFunctionGetStringForIntegerCodePoint(Int32(stream.pointee.codecpar.pointee.color_trc.rawValue)) {
+                if let trc = CVTransferFunctionGetStringForIntegerCodePoint(
+                    Int32(stream.pointee.codecpar.pointee.color_trc.rawValue))
+                {
                     self.transferFunction = trc.takeUnretainedValue()
                 } else {
                     switch stream.pointee.codecpar.pointee.color_trc {
@@ -165,7 +170,9 @@ public final class MediaDemuxer: @unchecked Sendable {
                 }
 
                 // Dynamically map YCbCr color matrix / colorspace
-                if let matrix = CVYCbCrMatrixGetStringForIntegerCodePoint(Int32(stream.pointee.codecpar.pointee.color_space.rawValue)) {
+                if let matrix = CVYCbCrMatrixGetStringForIntegerCodePoint(
+                    Int32(stream.pointee.codecpar.pointee.color_space.rawValue))
+                {
                     self.yCbCrMatrix = matrix.takeUnretainedValue()
                 } else {
                     switch stream.pointee.codecpar.pointee.color_space {
@@ -189,11 +196,12 @@ public final class MediaDemuxer: @unchecked Sendable {
 
                 // Bit depth detection
                 let pixFmt = stream.pointee.codecpar.pointee.format
-                if pixFmt == AV_PIX_FMT_YUV420P10LE.rawValue ||
-                   pixFmt == AV_PIX_FMT_YUV420P10BE.rawValue ||
-                   pixFmt == AV_PIX_FMT_YUV422P10LE.rawValue ||
-                   pixFmt == AV_PIX_FMT_YUV444P10LE.rawValue ||
-                   (codecId == AV_CODEC_ID_HEVC && (self.transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ || self.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG)) {
+                if pixFmt == AV_PIX_FMT_YUV420P10LE.rawValue || pixFmt == AV_PIX_FMT_YUV420P10BE.rawValue
+                    || pixFmt == AV_PIX_FMT_YUV422P10LE.rawValue || pixFmt == AV_PIX_FMT_YUV444P10LE.rawValue
+                    || (codecId == AV_CODEC_ID_HEVC
+                        && (self.transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
+                            || self.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG))
+                {
                     self.bitDepth = 10
                 } else {
                     self.bitDepth = 8
@@ -204,13 +212,17 @@ public final class MediaDemuxer: @unchecked Sendable {
                 // In MP4/MKV it is identified by dvvC/dvcC box (dv_profile == 5)
                 // or DOVI side data in stream.
                 if let extradata = stream.pointee.codecpar.pointee.extradata,
-                   stream.pointee.codecpar.pointee.extradata_size >= 24 {
+                    stream.pointee.codecpar.pointee.extradata_size >= 24
+                {
                     let extraDataSize = Int(stream.pointee.codecpar.pointee.extradata_size)
                     let extraBytes = UnsafeBufferPointer(start: extradata, count: extraDataSize)
                     for k in 0..<(extraDataSize - 8) {
                         // Check for 'dvcC' or 'dvvC' fourcc
-                        if (extraBytes[k] == 0x64 && extraBytes[k+1] == 0x76 && extraBytes[k+2] == 0x63 && extraBytes[k+3] == 0x43) ||
-                           (extraBytes[k] == 0x64 && extraBytes[k+1] == 0x76 && extraBytes[k+2] == 0x76 && extraBytes[k+3] == 0x43) {
+                        if (extraBytes[k] == 0x64 && extraBytes[k + 1] == 0x76 && extraBytes[k + 2] == 0x63
+                            && extraBytes[k + 3] == 0x43)
+                            || (extraBytes[k] == 0x64 && extraBytes[k + 1] == 0x76 && extraBytes[k + 2] == 0x76
+                                && extraBytes[k + 3] == 0x43)
+                        {
                             // dv_profile is in the high 7 bits of byte at offset + 6
                             let dvProfile = (extraBytes[k + 6] >> 1) & 0x7F
                             if dvProfile == 5 {
@@ -258,8 +270,11 @@ public final class MediaDemuxer: @unchecked Sendable {
                     self.hasAudio = true
                     self.audioChannels = track.channels
                     self.audioSampleRate = track.sampleRate
-                    if let ed = stream.pointee.codecpar.pointee.extradata, stream.pointee.codecpar.pointee.extradata_size > 0 {
-                        self.audioExtraData = Data(bytes: ed, count: Int(stream.pointee.codecpar.pointee.extradata_size))
+                    if let ed = stream.pointee.codecpar.pointee.extradata,
+                        stream.pointee.codecpar.pointee.extradata_size > 0
+                    {
+                        self.audioExtraData = Data(
+                            bytes: ed, count: Int(stream.pointee.codecpar.pointee.extradata_size))
                     }
                 }
             }
@@ -277,14 +292,15 @@ public final class MediaDemuxer: @unchecked Sendable {
         guard let ctx = formatCtx, videoStreamIndex >= 0 else { return (nil, nil, nil) }
         let stream = ctx.pointee.streams[videoStreamIndex]!
         guard let extradata = stream.pointee.codecpar.pointee.extradata,
-              stream.pointee.codecpar.pointee.extradata_size > 0 else {
+            stream.pointee.codecpar.pointee.extradata_size > 0
+        else {
             return (nil, nil, nil)
         }
         let size = Int(stream.pointee.codecpar.pointee.extradata_size)
         let data = Data(bytes: extradata, count: size)
 
         // Case 1: Raw Annex B in extradata (starts with 0x00 0x00 0x01 or 0x00 0x00 0x00 0x01)
-        if (size >= 3 && data[0] == 0 && data[1] == 0 && (data[2] == 1 || (size > 3 && data[2] == 0 && data[3] == 1))) {
+        if size >= 3 && data[0] == 0 && data[1] == 0 && (data[2] == 1 || (size > 3 && data[2] == 0 && data[3] == 1)) {
             let nalus = Self.extractNALUnits(from: data)
             var vps: Data?
             var sps: Data?
@@ -292,13 +308,16 @@ public final class MediaDemuxer: @unchecked Sendable {
             for nalu in nalus {
                 if codec == .hevc {
                     let nalType = (nalu[0] >> 1) & 0x3F
-                    if nalType == 32 { vps = nalu }
-                    else if nalType == 33 { sps = nalu }
-                    else if nalType == 34 { pps = nalu }
+                    if nalType == 32 {
+                        vps = nalu
+                    } else if nalType == 33 {
+                        sps = nalu
+                    } else if nalType == 34 {
+                        pps = nalu
+                    }
                 } else if codec == .h264 {
                     let nalType = nalu[0] & 0x1F
-                    if nalType == 7 { sps = nalu }
-                    else if nalType == 8 { pps = nalu }
+                    if nalType == 7 { sps = nalu } else if nalType == 8 { pps = nalu }
                 }
             }
             return (vps, sps, pps)
@@ -317,7 +336,7 @@ public final class MediaDemuxer: @unchecked Sendable {
                 guard offset + spsLen <= size else { break }
                 sps = data.subdata(in: offset..<(offset + spsLen))
                 offset += spsLen
-                break // first SPS is sufficient
+                break  // first SPS is sufficient
             }
             guard offset < size else { return (nil, sps, nil) }
             let numPPS = Int(data[offset])
@@ -330,7 +349,7 @@ public final class MediaDemuxer: @unchecked Sendable {
                 guard offset + ppsLen <= size else { break }
                 pps = data.subdata(in: offset..<(offset + ppsLen))
                 offset += ppsLen
-                break // first PPS
+                break  // first PPS
             }
             return (nil, sps, pps)
         }
@@ -358,9 +377,13 @@ public final class MediaDemuxer: @unchecked Sendable {
                     let naluData = data.subdata(in: offset..<(offset + nalLen))
                     offset += nalLen
 
-                    if nalType == 32 { vps = naluData }
-                    else if nalType == 33 { sps = naluData }
-                    else if nalType == 34 { pps = naluData }
+                    if nalType == 32 {
+                        vps = naluData
+                    } else if nalType == 33 {
+                        sps = naluData
+                    } else if nalType == 34 {
+                        pps = naluData
+                    }
                 }
             }
             return (vps, sps, pps)
@@ -398,16 +421,24 @@ public final class MediaDemuxer: @unchecked Sendable {
                     guard !naluData.isEmpty else { continue }
                     if codec == .hevc {
                         let nalType = (naluData[0] >> 1) & 0x3F
-                        if vps == nil && nalType == 32 { vps = naluData }
-                        else if sps == nil && nalType == 33 { sps = naluData }
-                        else if pps == nil && nalType == 34 { pps = naluData }
-                        else if nalType == 39 {
-                            parsePrefixSEI(naluData: naluData, masteringDisplay: &masteringDisplay, contentLightLevel: &contentLightLevel)
+                        if vps == nil && nalType == 32 {
+                            vps = naluData
+                        } else if sps == nil && nalType == 33 {
+                            sps = naluData
+                        } else if pps == nil && nalType == 34 {
+                            pps = naluData
+                        } else if nalType == 39 {
+                            parsePrefixSEI(
+                                naluData: naluData, masteringDisplay: &masteringDisplay,
+                                contentLightLevel: &contentLightLevel)
                         }
                     } else if codec == .h264 {
                         let nalType = naluData[0] & 0x1F
-                        if sps == nil && nalType == 7 { sps = naluData }
-                        else if pps == nil && nalType == 8 { pps = naluData }
+                        if sps == nil && nalType == 7 {
+                            sps = naluData
+                        } else if pps == nil && nalType == 8 {
+                            pps = naluData
+                        }
                     }
                 }
                 av_packet_unref(&pkt)
@@ -441,7 +472,7 @@ public final class MediaDemuxer: @unchecked Sendable {
             kCVImageBufferYCbCrMatrixKey as String: yCbCrMatrix as String,
             kCMFormatDescriptionExtension_FullRangeVideo as String: isFullRange,
             kCVImageBufferChromaLocationTopFieldKey as String: kCVImageBufferChromaLocation_Left as String,
-            kCVImageBufferChromaLocationBottomFieldKey as String: kCVImageBufferChromaLocation_Left as String
+            kCVImageBufferChromaLocationBottomFieldKey as String: kCVImageBufferChromaLocation_Left as String,
         ]
 
         if let masteringDisplay {
@@ -459,7 +490,7 @@ public final class MediaDemuxer: @unchecked Sendable {
                         let pointers: [UnsafePointer<UInt8>] = [
                             vpsBytes.baseAddress!.assumingMemoryBound(to: UInt8.self),
                             spsBytes.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                            ppsBytes.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                            ppsBytes.baseAddress!.assumingMemoryBound(to: UInt8.self),
                         ]
                         let sizes: [Int] = [vpsData.count, spsData.count, ppsData.count]
 
@@ -480,7 +511,7 @@ public final class MediaDemuxer: @unchecked Sendable {
                 ppsData.withUnsafeBytes { ppsBytes in
                     let pointers: [UnsafePointer<UInt8>] = [
                         spsBytes.baseAddress!.assumingMemoryBound(to: UInt8.self),
-                        ppsBytes.baseAddress!.assumingMemoryBound(to: UInt8.self)
+                        ppsBytes.baseAddress!.assumingMemoryBound(to: UInt8.self),
                     ]
                     let sizes: [Int] = [spsData.count, ppsData.count]
 
@@ -531,7 +562,7 @@ public final class MediaDemuxer: @unchecked Sendable {
             var u = 0
             let rawBytes = [UInt8](rawPayload)
             while u < rawBytes.count {
-                if u + 2 < rawBytes.count && rawBytes[u] == 0 && rawBytes[u+1] == 0 && rawBytes[u+2] == 3 {
+                if u + 2 < rawBytes.count && rawBytes[u] == 0 && rawBytes[u + 1] == 0 && rawBytes[u + 2] == 3 {
                     unescaped.append(0)
                     unescaped.append(0)
                     u += 3
@@ -623,18 +654,30 @@ public final class MediaDemuxer: @unchecked Sendable {
         }
 
         if status == noErr, let sb = sampleBuffer {
-            CMSetAttachment(sb, key: kCVImageBufferColorPrimariesKey, value: colorPrimaries, attachmentMode: kCMAttachmentMode_ShouldPropagate)
-            CMSetAttachment(sb, key: kCVImageBufferTransferFunctionKey, value: transferFunction, attachmentMode: kCMAttachmentMode_ShouldPropagate)
-            CMSetAttachment(sb, key: kCVImageBufferYCbCrMatrixKey, value: yCbCrMatrix, attachmentMode: kCMAttachmentMode_ShouldPropagate)
+            CMSetAttachment(
+                sb, key: kCVImageBufferColorPrimariesKey, value: colorPrimaries,
+                attachmentMode: kCMAttachmentMode_ShouldPropagate)
+            CMSetAttachment(
+                sb, key: kCVImageBufferTransferFunctionKey, value: transferFunction,
+                attachmentMode: kCMAttachmentMode_ShouldPropagate)
+            CMSetAttachment(
+                sb, key: kCVImageBufferYCbCrMatrixKey, value: yCbCrMatrix,
+                attachmentMode: kCMAttachmentMode_ShouldPropagate)
             if let masteringDisplay {
-                CMSetAttachment(sb, key: kCVImageBufferMasteringDisplayColorVolumeKey, value: masteringDisplay as CFData, attachmentMode: kCMAttachmentMode_ShouldPropagate)
+                CMSetAttachment(
+                    sb, key: kCVImageBufferMasteringDisplayColorVolumeKey, value: masteringDisplay as CFData,
+                    attachmentMode: kCMAttachmentMode_ShouldPropagate)
             }
             if let contentLightLevel {
-                CMSetAttachment(sb, key: kCVImageBufferContentLightLevelInfoKey, value: contentLightLevel as CFData, attachmentMode: kCMAttachmentMode_ShouldPropagate)
+                CMSetAttachment(
+                    sb, key: kCVImageBufferContentLightLevelInfoKey, value: contentLightLevel as CFData,
+                    attachmentMode: kCMAttachmentMode_ShouldPropagate)
             }
 
             if isBeforeTarget {
-                if let attachments = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: true) as? [NSMutableDictionary], let first = attachments.first {
+                if let attachments = CMSampleBufferGetSampleAttachmentsArray(sb, createIfNecessary: true)
+                    as? [NSMutableDictionary], let first = attachments.first
+                {
                     first[kCMSampleAttachmentKey_DoNotDisplay] = true
                 }
             }
@@ -771,7 +814,8 @@ public final class MediaDemuxer: @unchecked Sendable {
         let count = bytes.count
 
         // Check if stream begins with an Annex B start code (0x00 0x00 0x01 or 0x00 0x00 0x00 0x01)
-        let isAnnexB = (bytes[0] == 0 && bytes[1] == 0 && (bytes[2] == 1 || (count > 3 && bytes[2] == 0 && bytes[3] == 1)))
+        let isAnnexB =
+            (bytes[0] == 0 && bytes[1] == 0 && (bytes[2] == 1 || (count > 3 && bytes[2] == 0 && bytes[3] == 1)))
 
         if isAnnexB {
             var nalus: [Data] = []
@@ -806,7 +850,9 @@ public final class MediaDemuxer: @unchecked Sendable {
             var nalus: [Data] = []
             var offset = 0
             while offset + 4 <= count {
-                let naluLen = Int(bytes[offset]) << 24 | Int(bytes[offset + 1]) << 16 | Int(bytes[offset + 2]) << 8 | Int(bytes[offset + 3])
+                let naluLen =
+                    Int(bytes[offset]) << 24 | Int(bytes[offset + 1]) << 16 | Int(bytes[offset + 2]) << 8
+                    | Int(bytes[offset + 3])
                 offset += 4
                 guard naluLen > 0, offset + naluLen <= count else { break }
                 nalus.append(data.subdata(in: offset..<(offset + naluLen)))
@@ -823,7 +869,9 @@ public final class MediaDemuxer: @unchecked Sendable {
             return (Data(), 0)
         }
 
-        let isAnnexB = (pktData[0] == 0 && pktData[1] == 0 && (pktData[2] == 1 || (count > 3 && pktData[2] == 0 && pktData[3] == 1)))
+        let isAnnexB =
+            (pktData[0] == 0 && pktData[1] == 0
+                && (pktData[2] == 1 || (count > 3 && pktData[2] == 0 && pktData[3] == 1)))
 
         if !isAnnexB {
             let data = Data(bytes: pktData, count: count)

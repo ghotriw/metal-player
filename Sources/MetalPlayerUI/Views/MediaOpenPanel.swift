@@ -9,7 +9,7 @@ public enum MediaOpenPanel {
             .video,
             .quickTimeMovie,
             .mpeg4Movie,
-            .avi
+            .avi,
         ]
         // Add common video formats supported by FFmpeg that may not be covered by system presets
         let extensions = ["mkv", "webm", "flv", "wmv", "ts", "m4v", "mov", "mp4", "ogv"]

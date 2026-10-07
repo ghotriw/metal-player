@@ -1,6 +1,7 @@
-import Testing
 import CoreMedia
 import CoreVideo
+import Testing
+
 @testable import MetalPlayerCore
 
 @Suite("FrameQueue Invariant Tests")
@@ -30,9 +31,18 @@ struct FrameQueueTests {
         let buf3 = createDummyPixelBuffer()
 
         // Push B-frames out of order: 2.0s, 1.0s, 3.0s
-        queue.push(VTVideoDecoder.DecodedFrame(pixelBuffer: buf2, pts: CMTime(seconds: 2.0, preferredTimescale: 1000), duration: CMTime(value: 41, timescale: 1000)))
-        queue.push(VTVideoDecoder.DecodedFrame(pixelBuffer: buf1, pts: CMTime(seconds: 1.0, preferredTimescale: 1000), duration: CMTime(value: 41, timescale: 1000)))
-        queue.push(VTVideoDecoder.DecodedFrame(pixelBuffer: buf3, pts: CMTime(seconds: 3.0, preferredTimescale: 1000), duration: CMTime(value: 41, timescale: 1000)))
+        queue.push(
+            VTVideoDecoder.DecodedFrame(
+                pixelBuffer: buf2, pts: CMTime(seconds: 2.0, preferredTimescale: 1000),
+                duration: CMTime(value: 41, timescale: 1000)))
+        queue.push(
+            VTVideoDecoder.DecodedFrame(
+                pixelBuffer: buf1, pts: CMTime(seconds: 1.0, preferredTimescale: 1000),
+                duration: CMTime(value: 41, timescale: 1000)))
+        queue.push(
+            VTVideoDecoder.DecodedFrame(
+                pixelBuffer: buf3, pts: CMTime(seconds: 3.0, preferredTimescale: 1000),
+                duration: CMTime(value: 41, timescale: 1000)))
 
         #expect(queue.count == 3)
 
@@ -49,9 +59,15 @@ struct FrameQueueTests {
         let buf2 = createDummyPixelBuffer()
 
         // Frame 1 marked as doNotDisplay
-        queue.push(VTVideoDecoder.DecodedFrame(pixelBuffer: buf1, pts: CMTime(seconds: 1.0, preferredTimescale: 1000), duration: CMTime(value: 41, timescale: 1000), doNotDisplay: true))
+        queue.push(
+            VTVideoDecoder.DecodedFrame(
+                pixelBuffer: buf1, pts: CMTime(seconds: 1.0, preferredTimescale: 1000),
+                duration: CMTime(value: 41, timescale: 1000), doNotDisplay: true))
         // Frame 2 is displayable
-        queue.push(VTVideoDecoder.DecodedFrame(pixelBuffer: buf2, pts: CMTime(seconds: 1.04, preferredTimescale: 1000), duration: CMTime(value: 41, timescale: 1000), doNotDisplay: false))
+        queue.push(
+            VTVideoDecoder.DecodedFrame(
+                pixelBuffer: buf2, pts: CMTime(seconds: 1.04, preferredTimescale: 1000),
+                duration: CMTime(value: 41, timescale: 1000), doNotDisplay: false))
 
         let popped = queue.popFrame(forSyncTime: CMTime(seconds: 1.05, preferredTimescale: 1000))
         #expect(popped === buf2)
@@ -63,7 +79,10 @@ struct FrameQueueTests {
         let buf = createDummyPixelBuffer()
 
         // Frame is at 5.0 seconds
-        queue.push(VTVideoDecoder.DecodedFrame(pixelBuffer: buf, pts: CMTime(seconds: 5.0, preferredTimescale: 1000), duration: CMTime(value: 41, timescale: 1000)))
+        queue.push(
+            VTVideoDecoder.DecodedFrame(
+                pixelBuffer: buf, pts: CMTime(seconds: 5.0, preferredTimescale: 1000),
+                duration: CMTime(value: 41, timescale: 1000)))
 
         // Querying at 1.0s should return nil and preserve the frame
         let popped = queue.popFrame(forSyncTime: CMTime(seconds: 1.0, preferredTimescale: 1000))
@@ -76,7 +95,10 @@ struct FrameQueueTests {
         let queue = FrameQueue()
         let buf = createDummyPixelBuffer()
 
-        queue.push(VTVideoDecoder.DecodedFrame(pixelBuffer: buf, pts: CMTime(seconds: 1.0, preferredTimescale: 1000), duration: CMTime(value: 41, timescale: 1000)))
+        queue.push(
+            VTVideoDecoder.DecodedFrame(
+                pixelBuffer: buf, pts: CMTime(seconds: 1.0, preferredTimescale: 1000),
+                duration: CMTime(value: 41, timescale: 1000)))
         _ = queue.popFrame(forSyncTime: CMTime(seconds: 1.0, preferredTimescale: 1000))
         #expect(queue.getLastRenderedBuffer() === buf)
 
@@ -94,7 +116,8 @@ struct FrameQueueTests {
             let buf = createDummyPixelBuffer()
             if i == 1 { firstBuffer = buf }
             let pts = CMTime(seconds: Double(i), preferredTimescale: 1000)
-            queue.push(VTVideoDecoder.DecodedFrame(pixelBuffer: buf, pts: pts, duration: CMTime(value: 41, timescale: 1000)))
+            queue.push(
+                VTVideoDecoder.DecodedFrame(pixelBuffer: buf, pts: pts, duration: CMTime(value: 41, timescale: 1000)))
         }
 
         #expect(queue.count == 60)

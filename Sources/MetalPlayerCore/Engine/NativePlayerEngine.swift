@@ -1,6 +1,6 @@
-import Foundation
 import AVFoundation
 import CoreMedia
+import Foundation
 import Observation
 import os
 
@@ -106,7 +106,8 @@ public final class NativePlayerEngine: PlayerEngine {
         setupDisplayLink()
         setupAudioObservers()
 
-        timeObserver = synchronizer.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main) { [weak self] time in
+        timeObserver = synchronizer.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main)
+        { [weak self] time in
             guard let self else { return }
             let seconds = CMTimeGetSeconds(time)
             if !seconds.isNaN && !seconds.isInfinite && seconds >= 0 {
@@ -143,7 +144,9 @@ public final class NativePlayerEngine: PlayerEngine {
 
     private func handleAudioConfigurationChange() {
         guard isPlaying else { return }
-        print("[NativePlayerEngine] Audio configuration changed / flushed by system (Spatial Audio toggle or route change)")
+        print(
+            "[NativePlayerEngine] Audio configuration changed / flushed by system (Spatial Audio toggle or route change)"
+        )
         audioFeedQueue.async { [weak self] in
             guard let self else { return }
             self.audioRenderer.flush()
@@ -157,7 +160,8 @@ public final class NativePlayerEngine: PlayerEngine {
         guard let link = dl else { return }
         self.displayLink = link
 
-        let callback: CVDisplayLinkOutputCallback = { (displayLink, inNow, inOutputTime, flagsIn, flagsOut, displayLinkContext) -> CVReturn in
+        let callback: CVDisplayLinkOutputCallback = {
+            (displayLink, inNow, inOutputTime, flagsIn, flagsOut, displayLinkContext) -> CVReturn in
             guard let context = displayLinkContext else { return kCVReturnSuccess }
             let engine = Unmanaged<NativePlayerEngine>.fromOpaque(context).takeUnretainedValue()
             engine.displayLinkTick()
@@ -244,40 +248,46 @@ public final class NativePlayerEngine: PlayerEngine {
             uniforms.sourcePeakNits = newDemuxer.maxPeakNits
             if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
                 uniforms.colorPrimaries = 1
-            } else if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3 ||
-                      newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65 {
+            } else if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3
+                || newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65
+            {
                 uniforms.colorPrimaries = 2
             } else {
-                uniforms.colorPrimaries = 0 // BT.2020
+                uniforms.colorPrimaries = 0  // BT.2020
             }
 
-            if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2 ||
-               newDemuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma {
-                uniforms.transferFunction = 2 // SDR
+            if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2
+                || newDemuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma
+            {
+                uniforms.transferFunction = 2  // SDR
             } else if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
-                uniforms.transferFunction = 1 // HLG
+                uniforms.transferFunction = 1  // HLG
             } else {
-                uniforms.transferFunction = 0 // PQ
+                uniforms.transferFunction = 0  // PQ
             }
 
             uniforms.bitDepth = UInt32(newDemuxer.bitDepth)
             uniforms.isFullRange = newDemuxer.isFullRange ? 1 : 0
             if newDemuxer.isDolbyVisionProfile5 {
-                uniforms.colorSpaceMode = 2 // Dolby Vision IPT / ICtCp
+                uniforms.colorSpaceMode = 2  // Dolby Vision IPT / ICtCp
             } else if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
-                uniforms.colorSpaceMode = 1 // BT.709
+                uniforms.colorSpaceMode = 1  // BT.709
             } else {
-                uniforms.colorSpaceMode = 0 // Standard BT.2020 YCbCr
+                uniforms.colorSpaceMode = 0  // Standard BT.2020 YCbCr
             }
         }
-        print("[NativePlayerEngine] Loaded successfully. Duration: \(duration)s, peakNits: \(newDemuxer.maxPeakNits), formatDesc: \(String(describing: newDemuxer.formatDescription))")
+        print(
+            "[NativePlayerEngine] Loaded successfully. Duration: \(duration)s, peakNits: \(newDemuxer.maxPeakNits), formatDesc: \(String(describing: newDemuxer.formatDescription))"
+        )
 
         // Initialize audio decoder if audio stream is present
         if newDemuxer.hasAudio, let audioParams = newDemuxer.getAudioCodecParameters() {
             let decoder = FFAudioDecoder(codecParameters: audioParams, timebase: newDemuxer.audioTimebase)
             self.audioDecoder = decoder
             self.audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
-            print("[NativePlayerEngine] Audio decoder initialized: \(String(describing: self.audioDecoder != nil)), channels: \(newDemuxer.audioChannels), rate: \(newDemuxer.audioSampleRate)")
+            print(
+                "[NativePlayerEngine] Audio decoder initialized: \(String(describing: self.audioDecoder != nil)), channels: \(newDemuxer.audioChannels), rate: \(newDemuxer.audioSampleRate)"
+            )
         } else {
             self.audioDecoder = nil
             print("[NativePlayerEngine] No audio track found or failed to get codec parameters")
@@ -337,7 +347,9 @@ public final class NativePlayerEngine: PlayerEngine {
                     }
                     if count <= 5 || count % 200 == 0 {
                         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuf)
-                        print("[NativePlayerEngine] Enqueued sample #\(count), pts: \(CMTimeGetSeconds(pts))s, layer.status: \(layer.status.rawValue)")
+                        print(
+                            "[NativePlayerEngine] Enqueued sample #\(count), pts: \(CMTimeGetSeconds(pts))s, layer.status: \(layer.status.rawValue)"
+                        )
                     }
 
                     // Feed hardware decoder only if Metal tone mapping is active
@@ -397,7 +409,7 @@ public final class NativePlayerEngine: PlayerEngine {
 
         // Stop requesting data and wait for audioFeedQueue to finish executing any in-flight block
         audioRenderer.stopRequestingMediaData()
-        audioFeedQueue.sync { }
+        audioFeedQueue.sync {}
 
         audioRenderer.flush()
         audioDecoder?.flush()

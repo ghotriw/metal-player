@@ -1,5 +1,5 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 import UniformTypeIdentifiers
 
 public struct WelcomeView: View {
@@ -38,14 +38,15 @@ public struct WelcomeView: View {
                             LinearGradient(
                                 colors: [
                                     Color.accentColor.opacity(0.9),
-                                    Color.accentColor.opacity(0.6)
+                                    Color.accentColor.opacity(0.6),
                                 ],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
                         .frame(width: 84, height: 84)
-                        .shadow(color: Color.accentColor.opacity(colorScheme == .dark ? 0.4 : 0.25), radius: 16, x: 0, y: 8)
+                        .shadow(
+                            color: Color.accentColor.opacity(colorScheme == .dark ? 0.4 : 0.25), radius: 16, x: 0, y: 8)
 
                     Image(systemName: "play.fill")
                         .font(.system(size: 38, weight: .semibold))

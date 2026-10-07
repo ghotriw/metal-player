@@ -1,24 +1,25 @@
+import AppKit
+import CoreVideo
 import Foundation
 import Metal
 import QuartzCore
-import CoreVideo
-import AppKit
+import os
 
 public struct ToneMapUniforms: Sendable {
-    public var targetNits: Float = 203.0                  // 203 nits standard ITU SDR reference
-    public var sourcePeakNits: Float = 1000.0             // from SEI 144 / mastering display
+    public var targetNits: Float = 203.0  // 203 nits standard ITU SDR reference
+    public var sourcePeakNits: Float = 1000.0  // from SEI 144 / mastering display
     public var outputExposure: Float = 1.0
     public var outputSaturation: Float = 1.0
     public var outputWarmCorrection: Float = 0.0
     public var outputHighlightCompression: Float = 0.0
     public var outputShadowDetail: Float = 0.0
     public var outputShadowLift: Float = 0.0
-    public var outputSharpness: Float = 0.5               // Default 0.5 for CAS sharpening on 5K display
-    public var colorPrimaries: UInt32 = 0                 // 0: BT.2020, 1: BT.709, 2: DCI-P3
-    public var transferFunction: UInt32 = 0               // 0: PQ, 1: HLG, 2: BT.709 / SDR
-    public var bitDepth: UInt32 = 10                      // 8 or 10
-    public var isFullRange: UInt32 = 0                    // 0: Video Range, 1: Full Range
-    public var colorSpaceMode: UInt32 = 0                 // 0: Standard YCbCr BT.2020, 1: BT.709, 2: Dolby Vision IPT / ICtCp
+    public var outputSharpness: Float = 0.5  // Default 0.5 for CAS sharpening on 5K display
+    public var colorPrimaries: UInt32 = 0  // 0: BT.2020, 1: BT.709, 2: DCI-P3
+    public var transferFunction: UInt32 = 0  // 0: PQ, 1: HLG, 2: BT.709 / SDR
+    public var bitDepth: UInt32 = 10  // 8 or 10
+    public var isFullRange: UInt32 = 0  // 0: Video Range, 1: Full Range
+    public var colorSpaceMode: UInt32 = 0  // 0: Standard YCbCr BT.2020, 1: BT.709, 2: Dolby Vision IPT / ICtCp
 
     public init(
         targetNits: Float = 203.0,
@@ -53,8 +54,6 @@ public struct ToneMapUniforms: Sendable {
     }
 }
 
-import os
-
 public final class MetalVideoRenderer: @unchecked Sendable {
     public let metalLayer = CAMetalLayer()
     private let device: MTLDevice
@@ -75,7 +74,8 @@ public final class MetalVideoRenderer: @unchecked Sendable {
 
     public init?() {
         guard let device = MTLCreateSystemDefaultDevice(),
-              let commandQueue = device.makeCommandQueue() else {
+            let commandQueue = device.makeCommandQueue()
+        else {
             return nil
         }
         self.device = device
@@ -121,8 +121,9 @@ public final class MetalVideoRenderer: @unchecked Sendable {
         defer { renderLock.unlock() }
 
         guard let pipelineState,
-              let textureCache,
-              let drawable = metalLayer.nextDrawable() else {
+            let textureCache,
+            let drawable = metalLayer.nextDrawable()
+        else {
             return
         }
 
@@ -130,10 +131,12 @@ public final class MetalVideoRenderer: @unchecked Sendable {
         let height = CVPixelBufferGetHeight(pixelBuffer)
 
         let pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
-        let is8Bit = (pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ||
-                      pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
-        let isFull = (pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
-                      pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange)
+        let is8Bit =
+            (pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+                || pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+        let isFull =
+            (pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                || pixelFormat == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange)
 
         let yPixelFormat: MTLPixelFormat = is8Bit ? .r8Unorm : .r16Unorm
         let uvPixelFormat: MTLPixelFormat = is8Bit ? .rg8Unorm : .rg16Unorm
@@ -167,8 +170,9 @@ public final class MetalVideoRenderer: @unchecked Sendable {
         )
 
         guard yStatus == kCVReturnSuccess, uvStatus == kCVReturnSuccess,
-              let yTexture = CVMetalTextureGetTexture(yTextureRef!),
-              let uvTexture = CVMetalTextureGetTexture(uvTextureRef!) else {
+            let yTexture = CVMetalTextureGetTexture(yTextureRef!),
+            let uvTexture = CVMetalTextureGetTexture(uvTextureRef!)
+        else {
             return
         }
 
@@ -179,7 +183,8 @@ public final class MetalVideoRenderer: @unchecked Sendable {
         renderPassDesc.colorAttachments[0].storeAction = .store
 
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDesc) else {
+            let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDesc)
+        else {
             return
         }
 

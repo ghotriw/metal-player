@@ -1,8 +1,8 @@
 import AppKit
-import SwiftUI
-import UniformTypeIdentifiers
 import MetalPlayerCore
 import MetalPlayerUI
+import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class WelcomeWindowController: NSWindowController {

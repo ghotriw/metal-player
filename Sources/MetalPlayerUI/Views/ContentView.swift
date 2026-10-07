@@ -1,6 +1,6 @@
-import SwiftUI
 import AppKit
 import MetalPlayerCore
+import SwiftUI
 
 public struct ContentView: View {
     public let engine: NativePlayerEngine

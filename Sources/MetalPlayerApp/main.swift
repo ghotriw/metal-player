@@ -1,7 +1,7 @@
 import AppKit
-import SwiftUI
-import MetalPlayerUI
 import MetalPlayerCore
+import MetalPlayerUI
+import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {

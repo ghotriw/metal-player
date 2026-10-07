@@ -1,6 +1,6 @@
-import Foundation
 import CoreMedia
 import CoreVideo
+import Foundation
 
 public final class FrameQueue: @unchecked Sendable {
     private let lock = NSLock()
@@ -53,7 +53,9 @@ public final class FrameQueue: @unchecked Sendable {
     public func getLatestFrame(forSyncTime syncTime: CMTime) -> CVPixelBuffer? {
         lock.lock()
         defer { lock.unlock() }
-        if let frame = frames.last(where: { !$0.doNotDisplay && $0.pts <= syncTime + CMTime(value: 100, timescale: 1000) }) {
+        if let frame = frames.last(where: {
+            !$0.doNotDisplay && $0.pts <= syncTime + CMTime(value: 100, timescale: 1000)
+        }) {
             lastRenderedBuffer = frame.pixelBuffer
             return frame.pixelBuffer
         }

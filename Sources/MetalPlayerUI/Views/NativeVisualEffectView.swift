@@ -1,5 +1,5 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 /// Wraps AppKit NSVisualEffectView with precise macOS materials and .withinWindow blending mode,
 /// matching the exact vibrancy and backdrop blur used in IINA.

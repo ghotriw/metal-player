@@ -1,5 +1,5 @@
-import AppKit
 import AVFoundation
+import AppKit
 
 public final class NativeVideoHostView: NSView {
     public var onFileDrop: ((String) -> Void)?
@@ -126,7 +126,8 @@ public final class NativeVideoHostView: NSView {
 
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         guard let items = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
-              let firstUrl = items.first else {
+            let firstUrl = items.first
+        else {
             return false
         }
         onFileDrop?(firstUrl.path)
