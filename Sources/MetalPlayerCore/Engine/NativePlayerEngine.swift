@@ -413,24 +413,14 @@ public final class NativePlayerEngine: PlayerEngine {
             }
         }
 
-        // Audio feed loop with backpressure to keep CoreAudio buffer tight (~0.4s lead time)
-        // This prevents CoreAudio Spatializer DSP stalls when toggling Spatial Audio in Control Center.
+        // Audio feed loop
+        // Let AVSampleBufferAudioRenderer manage its internal buffer backpressure via isReadyForMoreMediaData.
+        // Artificial early breaking when isReadyForMoreMediaData is true causes AVFoundation to immediately
+        // re-invoke this block in a 100% CPU busy-spin loop.
         if let aDecoder = self.audioDecoder {
             let audioTimebase = demuxer.audioTimebase
-            let sync = self.synchronizer
             audioRenderer.requestMediaDataWhenReady(on: audioFeedQueue) { [demuxer, aDecoder] in
                 while aRenderer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
-                    // Check audio buffer lead time relative to current playback time
-                    let currentPlaybackSeconds = CMTimeGetSeconds(sync.currentTime())
-                    if currentPlaybackSeconds >= 0 {
-                        let audioTimeSeconds = demuxer.currentAudioPtsSeconds
-                        if audioTimeSeconds > 0 && (audioTimeSeconds - currentPlaybackSeconds) > 0.300 {
-                            // Yield from the block without blocking the thread.
-                            // The system will invoke the block again when ready.
-                            break
-                        }
-                    }
-
                     if let packet = demuxer.nextAudioPacket() {
                         let pcmBuffers = aDecoder.decode(
                             packetData: packet.data,

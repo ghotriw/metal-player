@@ -108,7 +108,8 @@ To support embedding into host applications with web-driven frontends (e.g., `WK
 - **Strict Prohibition of `NSLock` and `Thread.sleep`:**
   - Traditional Objective-C `NSLock` is strictly prohibited. All synchronous mutual exclusions must use native Apple Silicon `OSAllocatedUnfairLock` from the `os` module (`OSAllocatedUnfairLock()`).
   - Blocking dispatch worker threads via `Thread.sleep` is strictly prohibited to prevent GCD thread pool starvation.
-  - Video and audio backpressure inside `requestMediaDataWhenReady` must be cooperative and non-blocking: when queues or lead-time thresholds are exceeded, the block immediately breaks/exits. Work resumes naturally when buffers are consumed or the hardware signals readiness.
+  - Video backpressure inside `requestMediaDataWhenReady` must be cooperative and non-blocking: when queue limits are reached, the block immediately breaks/exits.
+  - Audio backpressure is managed natively by CoreAudio's `AVSampleBufferAudioRenderer.isReadyForMoreMediaData`. Early manual breaking while `isReadyForMoreMediaData` is true is prohibited because AVFoundation immediately re-triggers the block in a 100% CPU busy-spin loop. Work resumes naturally when buffers are consumed and hardware signals readiness.
 - **Locking & Concurrency Standards:**
   - `MetalVideoRenderer` uses `renderLock: OSAllocatedUnfairLock` (synchronizing draw calls across display link and UI frame invalidation) and `OSAllocatedUnfairLock(initialState: ToneMapUniforms())`.
   - `FrameQueue` protects the internal decoded frame array and last rendered buffer via `OSAllocatedUnfairLock()`.
