@@ -26,7 +26,14 @@ public final class NativePlayerEngine: PlayerEngine {
             }
         }
     }
-    private let activeRenderModeLock = OSAllocatedUnfairLock(initialState: RenderMode.system)
+    public var isToneMappingPermitted: Bool = true {
+        didSet {
+            if oldValue != isToneMappingPermitted {
+                updateEffectiveRenderMode()
+            }
+        }
+    }
+    private let activeRenderModeLock = OSAllocatedUnfairLock(initialState: RenderMode.metalToneMap)
     nonisolated public var activeRenderMode: RenderMode {
         activeRenderModeLock.withLock { $0 }
     }
@@ -92,7 +99,21 @@ public final class NativePlayerEngine: PlayerEngine {
     private let frameQueue = FrameQueue()
     private var displayLink: CVDisplayLink?
 
-    public init() {
+    public convenience init() {
+        self.init(configuration: PlayerConfiguration())
+    }
+
+    public init(configuration: PlayerConfiguration) {
+        self.renderMode = configuration.defaultRenderMode
+        self.isToneMappingPermitted = configuration.enableToneMapping
+        self.metalTargetNits = configuration.targetNits
+        self.metalSharpness = configuration.sharpness
+        self.volume = configuration.initialVolume
+
+        metalRenderer?.uniforms.targetNits = configuration.targetNits
+        metalRenderer?.uniforms.outputSharpness = configuration.sharpness
+        audioRenderer.volume = configuration.initialVolume
+
         synchronizer.addRenderer(displayLayer)
         synchronizer.addRenderer(audioRenderer)
         audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
@@ -105,6 +126,7 @@ public final class NativePlayerEngine: PlayerEngine {
 
         setupDisplayLink()
         setupAudioObservers()
+        updateEffectiveRenderMode()
 
         timeObserver = synchronizer.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main)
         { [weak self] time in
@@ -175,11 +197,11 @@ public final class NativePlayerEngine: PlayerEngine {
         let newMode: RenderMode
         switch renderMode {
         case .auto:
-            newMode = isHDRDisplay ? .system : .metalToneMap
+            newMode = (isHDRDisplay || !isToneMappingPermitted) ? .system : .metalToneMap
         case .system:
             newMode = .system
         case .metalToneMap:
-            newMode = .metalToneMap
+            newMode = isToneMappingPermitted ? .metalToneMap : .system
         }
         activeRenderModeLock.withLock { $0 = newMode }
 

@@ -5,8 +5,14 @@ import SwiftUI
 
 @MainActor
 final class PlayerWindowController: NSWindowController, NSWindowDelegate {
-    private let engine = NativePlayerEngine()
+    let engine: NativePlayerEngine
     var onClose: (() -> Void)?
+
+    func applyConfiguration(_ config: PlayerConfiguration) {
+        engine.isToneMappingPermitted = config.enableToneMapping
+        engine.metalSharpness = config.sharpness
+        engine.metalTargetNits = config.targetNits
+    }
 
     private var standardButtons: [NSButton] {
         ([.closeButton, .miniaturizeButton, .zoomButton] as [NSWindow.ButtonType]).compactMap {
@@ -14,7 +20,8 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    init() {
+    init(configuration: PlayerConfiguration = PlayerConfiguration()) {
+        self.engine = NativePlayerEngine(configuration: configuration)
         let window = NSWindow(
             contentRect: NSRect(x: 100, y: 100, width: 960, height: 540),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],

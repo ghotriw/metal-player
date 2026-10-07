@@ -21,6 +21,7 @@ public protocol PlayerEngine: AnyObject, Sendable {
 
     @MainActor var renderMode: RenderMode { get set }
     @MainActor var isHDRDisplay: Bool { get set }
+    @MainActor var isToneMappingPermitted: Bool { get set }
     nonisolated var activeRenderMode: RenderMode { get }
 
     @MainActor var metalExposure: Float { get set }

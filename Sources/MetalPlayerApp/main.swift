@@ -7,22 +7,41 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var welcomeWindowController: WelcomeWindowController?
     private var playerWindowController: PlayerWindowController?
+    private var settingsWindowController: SettingsWindowController?
+    private var configuration = PlayerConfiguration()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupAppIcon()
         setupMainMenu()
 
-        // Check if file passed via command line argument
-        if CommandLine.arguments.count > 1 {
-            let filePath = CommandLine.arguments[1]
-            if FileManager.default.fileExists(atPath: filePath) {
-                openMediaFile(at: URL(fileURLWithPath: filePath))
-                NSApp.activate(ignoringOtherApps: true)
-                return
-            }
+        let baseConfig = PlayerConfiguration.loadFromUserDefaults()
+        let parsed = PlayerConfiguration.parse(base: baseConfig)
+        self.configuration = parsed.configuration
+
+        if let mediaPath = parsed.mediaPath, FileManager.default.fileExists(atPath: mediaPath) {
+            openMediaFile(at: URL(fileURLWithPath: mediaPath))
+            NSApp.activate(ignoringOtherApps: true)
+            return
         }
 
         showWelcomeWindow()
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func showSettingsWindow() {
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController(
+                onConfigurationChanged: { [weak self] newConfig in
+                    guard let self else { return }
+                    self.configuration.enableToneMapping = newConfig.enableToneMapping
+                    self.configuration.sharpness = newConfig.sharpness
+                    self.configuration.targetNits = newConfig.targetNits
+                    self.playerWindowController?.applyConfiguration(self.configuration)
+                }
+            )
+        }
+        settingsWindowController?.showWindow(nil)
+        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -40,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func openMediaFile(at url: URL) {
         if playerWindowController == nil {
-            let controller = PlayerWindowController()
+            let controller = PlayerWindowController(configuration: configuration)
             controller.onClose = { [weak self] in
                 // When player window closes, return to welcome window if app is still running
                 self?.showWelcomeWindow()
@@ -57,9 +76,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupAppIcon() {
         if let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
-           let icon = NSImage(contentsOf: iconURL) {
+            let icon = NSImage(contentsOf: iconURL)
+        {
             NSApp.applicationIconImage = icon
         }
+    }
+
+    @objc func settingsMenuItemClicked(_ sender: Any?) {
+        showSettingsWindow()
     }
 
     @objc func openFileMenuItemClicked(_ sender: Any?) {
@@ -91,6 +115,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(appMenuItem)
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
+
+        let settingsMenuItem = NSMenuItem(
+            title: "Settings…",
+            action: #selector(settingsMenuItemClicked(_:)),
+            keyEquivalent: ","
+        )
+        settingsMenuItem.target = self
+        appMenu.addItem(settingsMenuItem)
+        appMenu.addItem(NSMenuItem.separator())
 
         let quitMenuItem = NSMenuItem(
             title: "Quit MetalPlayer",
