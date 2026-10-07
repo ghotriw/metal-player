@@ -34,16 +34,13 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         window.title = "MetalPlayer"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
+        window.titlebarSeparatorStyle = .none
         window.isMovableByWindowBackground = true
-
-        let toolbar = NSToolbar()
-        toolbar.displayMode = .iconOnly
-        window.toolbar = toolbar
-        window.toolbarStyle = .unifiedCompact
 
         window.center()
         window.delegate = self
         window.isReleasedWhenClosed = false
+        updateToolbar(isFullscreen: false)
 
         let contentView = ContentView(
             engine: engine,
@@ -77,6 +74,26 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
                 button.animator().alphaValue = isVisible ? 1.0 : 0.0
             }
         }
+    }
+
+    private func updateToolbar(isFullscreen: Bool) {
+        guard let window else { return }
+        if isFullscreen {
+            window.toolbar = nil
+        } else {
+            let toolbar = NSToolbar()
+            toolbar.displayMode = .iconOnly
+            window.toolbar = toolbar
+            window.toolbarStyle = .unifiedCompact
+        }
+    }
+
+    func windowWillEnterFullScreen(_ notification: Notification) {
+        updateToolbar(isFullscreen: true)
+    }
+
+    func windowDidExitFullScreen(_ notification: Notification) {
+        updateToolbar(isFullscreen: false)
     }
 
     func windowWillClose(_ notification: Notification) {
