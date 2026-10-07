@@ -215,7 +215,7 @@ public final class NativePlayerEngine: PlayerEngine {
         timer.setEventHandler { [weak self] in
             guard let self, self.showDebugHUD else { return }
             let statusDesc: String = {
-                switch self.displayLayer.status {
+                switch self.displayLayer.sampleBufferRenderer.status {
                 case .rendering: return "Rendering"
                 case .failed: return "Failed"
                 default: return "Waiting"
@@ -293,8 +293,8 @@ public final class NativePlayerEngine: PlayerEngine {
             let feedingActive = isFeeding.withLock { $0 }
             if isPlaying || feedingActive {
                 // If currently playing, stop video feeding, flush displayLayer, and restart feeding for system mode
-                displayLayer.stopRequestingMediaData()
-                displayLayer.flush()
+                displayLayer.sampleBufferRenderer.stopRequestingMediaData()
+                displayLayer.sampleBufferRenderer.flush()
                 isVideoDrainPaused.withLock { $0 = false }
                 let demuxer = self.demuxer
                 feedQueue.async { [weak self] in
@@ -321,8 +321,8 @@ public final class NativePlayerEngine: PlayerEngine {
             frameQueue.clear()
             let feedingActive = isFeeding.withLock { $0 }
             if isPlaying || feedingActive {
-                displayLayer.stopRequestingMediaData()
-                displayLayer.flush()
+                displayLayer.sampleBufferRenderer.stopRequestingMediaData()
+                displayLayer.sampleBufferRenderer.flush()
                 isVideoDrainPaused.withLock { $0 = false }
                 let demuxer = self.demuxer
                 let decoder = self.decoder
@@ -487,8 +487,8 @@ public final class NativePlayerEngine: PlayerEngine {
         }
 
         isFeeding.withLock { $0 = false }
-        displayLayer.stopRequestingMediaData()
-        displayLayer.flush()
+        displayLayer.sampleBufferRenderer.stopRequestingMediaData()
+        displayLayer.sampleBufferRenderer.flush()
         audioRenderer.stopRequestingMediaData()
         audioRenderer.flush()
         audioDecoder?.flush()
@@ -537,21 +537,21 @@ public final class NativePlayerEngine: PlayerEngine {
         let feedingLock = self.isFeeding
         let drainPausedLock = self.isVideoDrainPaused
         let modeLock = self.activeRenderModeLock
-        nonisolated(unsafe) let layer = self.displayLayer
+        nonisolated(unsafe) let renderer = self.displayLayer.sampleBufferRenderer
 
         let sampleCountLock = OSAllocatedUnfairLock(initialState: 0)
         let decoder = self.decoder
         let queue = self.frameQueue
 
         // Video feed loop
-        displayLayer.requestMediaDataWhenReady(on: feedQueue) { [demuxer, queue] in
-            while layer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
+        renderer.requestMediaDataWhenReady(on: feedQueue) { [demuxer, queue] in
+            while renderer.isReadyForMoreMediaData && feedingLock.withLock({ $0 }) {
                 // Cooperative backpressure: If Metal tone mapping is active and frameQueue already has >=40 decoded frames (~1.6 seconds),
                 // stop requesting media data from AVFoundation cleanly.
                 // Do NOT break while isReadyForMoreMediaData is true, as AVFoundation will immediately re-invoke this block in a 100% CPU spin-loop!
                 if modeLock.withLock({ $0 == .metalToneMap }) && queue.count >= 40 {
                     drainPausedLock.withLock { $0 = true }
-                    layer.stopRequestingMediaData()
+                    renderer.stopRequestingMediaData()
                     break
                 }
 
@@ -564,13 +564,13 @@ public final class NativePlayerEngine: PlayerEngine {
                     if count <= 5 || count % 200 == 0 {
                         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuf)
                         print(
-                            "[NativePlayerEngine] Enqueued sample #\(count), pts: \(CMTimeGetSeconds(pts))s, layer.status: \(layer.status.rawValue)"
+                            "[NativePlayerEngine] Enqueued sample #\(count), pts: \(CMTimeGetSeconds(pts))s, layer.status: \(renderer.status.rawValue)"
                         )
                     }
 
                     if modeLock.withLock({ $0 == .metalToneMap }) {
                         // Decode via VTVideoDecoder for Metal tone-mapping.
-                        // Do NOT call layer.enqueue(sampleBuf)! AVSampleBufferDisplayLayer decodes frames even when hidden,
+                        // Do NOT call renderer.enqueue(sampleBuf)! AVSampleBufferDisplayLayer decodes frames even when hidden,
                         // which causes 4K double-decoding and wastes 50-70% CPU.
                         let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
                         let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
@@ -578,11 +578,11 @@ public final class NativePlayerEngine: PlayerEngine {
                         decoder.decode(sampleBuffer: sampleBuf)
                         PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueDecodeFrame", interval)
                     } else {
-                        // Native mode: Feed displayLayer directly
+                        // Native mode: Feed renderer directly
                         let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
                         let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
                             "EnqueueNativeSample", id: signpostID)
-                        layer.enqueue(sampleBuf)
+                        renderer.enqueue(sampleBuf)
                         PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueNativeSample", interval)
                         PlayerPerformanceMonitor.shared.recordNativeEnqueuedSample()
                     }
@@ -666,7 +666,7 @@ public final class NativePlayerEngine: PlayerEngine {
         synchronizer.setRate(0.0, time: synchronizer.currentTime())
         displayLink?.isPaused = true
         isFeeding.withLock { $0 = false }
-        displayLayer.stopRequestingMediaData()
+        displayLayer.sampleBufferRenderer.stopRequestingMediaData()
         audioRenderer.stopRequestingMediaData()
         isPlaying = false
         performanceMonitor.handlePlaybackStateChange(isPlaying: false)
@@ -687,8 +687,8 @@ public final class NativePlayerEngine: PlayerEngine {
         pause()
 
         isFeeding.withLock { $0 = false }
-        displayLayer.stopRequestingMediaData()
-        displayLayer.flush()
+        displayLayer.sampleBufferRenderer.stopRequestingMediaData()
+        displayLayer.sampleBufferRenderer.flush()
         audioRenderer.stopRequestingMediaData()
         audioRenderer.flush()
         audioDecoder?.flush()
@@ -698,7 +698,7 @@ public final class NativePlayerEngine: PlayerEngine {
         let targetTime = CMTime(seconds: seconds, preferredTimescale: 1000)
 
         let decoder = self.decoder
-        nonisolated(unsafe) let layer = self.displayLayer
+        nonisolated(unsafe) let renderer = self.displayLayer.sampleBufferRenderer
         feedQueue.async { [weak self, demuxer] in
             decoder.flush()
             demuxer.seek(to: seconds)
@@ -722,7 +722,7 @@ public final class NativePlayerEngine: PlayerEngine {
                         if isMetalMode {
                             decoder.decode(sampleBuffer: sample)
                         } else {
-                            layer.enqueue(sample)
+                            renderer.enqueue(sample)
                         }
                         attempts += 1
                         if CMTimeGetSeconds(pts) >= seconds {
@@ -775,7 +775,7 @@ public final class NativePlayerEngine: PlayerEngine {
         metricsTimer?.cancel()
         metricsTimer = nil
         isFeeding.withLock { $0 = false }
-        displayLayer.stopRequestingMediaData()
+        displayLayer.sampleBufferRenderer.stopRequestingMediaData()
         audioRenderer.stopRequestingMediaData()
     }
 }
