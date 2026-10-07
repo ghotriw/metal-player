@@ -32,16 +32,18 @@ case "$MODE" in
         echo "Lint check passed."
         ;;
     typecheck|--typecheck|-t)
-        echo "Type-checking and building Swift targets..."
-        swift build --build-tests
+        echo "Type-checking and building Swift targets (strict concurrency)..."
+        swift build --build-tests -Xswiftc -strict-concurrency=complete
         echo "Type-check passed."
         ;;
     check|--check|-c)
         echo "1. Checking Swift code style..."
         "$SWIFT_FORMAT_BIN" lint --recursive --strict "${VALID_TARGETS[@]}"
-        echo "2. Type-checking and building targets..."
-        swift build --build-tests
-        echo "All checks passed!"
+        echo "2. Type-checking targets with strict concurrency..."
+        swift build --build-tests -Xswiftc -strict-concurrency=complete
+        echo "3. Running test suite..."
+        swift test
+        echo "All checks passed! CI ready."
         ;;
     *)
         echo "Usage: $0 [format|lint|typecheck|check]"
