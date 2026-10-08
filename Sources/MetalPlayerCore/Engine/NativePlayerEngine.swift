@@ -86,7 +86,11 @@ public final class NativePlayerEngine: PlayerEngine {
     public var audioTracks: [MediaDemuxer.AudioTrack] = []
     public var selectedAudioTrackId: Int = -1
 
+    nonisolated private static let enqueueSampleBufferSelector = sel_registerName("enqueueSampleBuffer:")
+    nonisolated private static let flushSelector = sel_registerName("flush")
+
     nonisolated(unsafe) public let displayLayer = AVSampleBufferDisplayLayer()
+    nonisolated(unsafe) private let sampleBufferRenderer: AVSampleBufferVideoRenderer
     public let metalRenderer = MetalVideoRenderer()
     public let audioRenderer = AVSampleBufferAudioRenderer()
     public let audioReceiver: AVSampleBufferAudioRenderer.Receiver
@@ -150,6 +154,7 @@ public final class NativePlayerEngine: PlayerEngine {
 
         metalRenderer?.uniforms.targetNits = configuration.targetNits
         metalRenderer?.uniforms.outputSharpness = configuration.sharpness
+        self.sampleBufferRenderer = displayLayer.sampleBufferRenderer
         // Synchronizer manages audio receiver and master clock timeline
         self.audioReceiver = synchronizer.sampleBufferReceiver(adding: audioRenderer)
         audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
@@ -318,9 +323,7 @@ public final class NativePlayerEngine: PlayerEngine {
             dic[kCMSampleAttachmentKey_DisplayImmediately] = true
         }
 
-        nonisolated(unsafe) let layer = self.displayLayer
-        nonisolated(unsafe) let s = sample
-        layer.enqueue(s)
+        _ = sampleBufferRenderer.perform(Self.enqueueSampleBufferSelector, with: sample)
     }
 
     nonisolated private func displayLinkTick() {
@@ -493,7 +496,7 @@ public final class NativePlayerEngine: PlayerEngine {
         isFeeding.withLock { $0 = false }
         stopFeedingVideo()
         stopFeedingAudio()
-        displayLayer.flush()
+        _ = sampleBufferRenderer.perform(Self.flushSelector)
         audioReceiver.flush()
         audioDecoder?.flush()
 
@@ -647,15 +650,15 @@ public final class NativePlayerEngine: PlayerEngine {
                 try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
                 continue
             }
-            var pcmBuffers = audioDecoder.decode(
+            let pcmBuffers = audioDecoder.decode(
                 packetData: packet.data,
                 pts: packet.pts,
                 timebase: audioTimebase
             )
-            while !pcmBuffers.isEmpty {
+            for buf in pcmBuffers {
                 if Task.isCancelled || !feedingLock.withLock({ $0 }) { break }
-                let buf = pcmBuffers.removeFirst()
-                let ready: CMReadySampleBuffer<CMSampleBuffer.DynamicContent> = CMReadySampleBuffer(unsafeBuffer: buf)
+                nonisolated(unsafe) let sBuf = buf
+                let ready: CMReadySampleBuffer<CMSampleBuffer.DynamicContent> = CMReadySampleBuffer(unsafeBuffer: sBuf)
                 _ = try? await receiver.enqueue(ready)
             }
         }
@@ -728,7 +731,7 @@ public final class NativePlayerEngine: PlayerEngine {
         isFeeding.withLock { $0 = false }
         stopFeedingVideo()
         stopFeedingAudio()
-        displayLayer.flush()
+        _ = sampleBufferRenderer.perform(Self.flushSelector)
         audioReceiver.flush()
         audioDecoder?.flush()
         frameQueue.clear(resetDroppedFrames: true)

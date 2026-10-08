@@ -10,6 +10,7 @@ This document defines the core architecture principles, colorimetry standards, t
 - **Zero Legacy API Policy:**
   - Strictly prohibit APIs deprecated in macOS 14/15 or originating from OS X Carbon/Tiger era (e.g., `CVDisplayLink`, raw C callbacks, manual `Unmanaged.toOpaque()` pointer casting).
   - Modern QuartzCore, Metal, and AVFoundation system APIs (`CADisplayLink`, `AVSampleBufferRenderSynchronizer`, Swift Concurrency `@Observable`, `@MainActor`, `OSAllocatedUnfairLock`) must be utilized exclusively.
+  - *Exception:* Decoupled `sampleBufferRenderer` selector dispatch is deliberately retained to prevent the Apple Silicon IOMFB Direct Scanout pause freeze (see Section 3.1).
 
 ---
 
@@ -83,17 +84,23 @@ To support embedding into host applications with web-driven frontends (e.g., `WK
   - The render mode determines how the decoded `CVPixelBuffer` is presented:
     - **`.metalToneMap` (SDR Displays):** Frame is rendered via `MetalVideoRenderer` into `CAMetalLayer` with BT.2390 tone curve.
     - **`.system` (Native Liquid Retina XDR / HDR Displays):** Frame is wrapped in a `CMSampleBuffer` with `kCMSampleAttachmentKey_DisplayImmediately = true` and enqueued directly to `AVSampleBufferDisplayLayer`.
+- **No Compressed NALU Direct Passthrough:**
+  - Under no circumstances should `demuxer.nextVideoSample()` return raw compressed NALU packets (e.g. HEVC/H.264) to be enqueued directly into `displayLayer` / `videoReceiver` with movie PTS.
+  - **Failure Mode:** On Apple Silicon Liquid Retina XDR displays in fullscreen mode, enqueuing compressed packets synchronized with movie PTS triggers hardware Direct Scanout (`IOMFBDisplay`). Seeking backward sends older PTS packets that break internal hardware fences (`IOFenceTransaction`), completely deadlocking `WindowServer`.
+  - **Architectural Uniformity:** All frames must pass through `VTVideoDecoder` and `FrameQueue` so that both Metal and System renderers receive decoded `CVPixelBuffer` frames paced identically by `CADisplayLink`.
 - **DisplayLayer & Timebase Isolation (XDR Fullscreen Deadlock Prevention):**
-  - **CRITICAL INVARIANT:** Under no circumstances should raw compressed NALU packets be enqueued into an `AVSampleBufferDisplayLayer` attached to `AVSampleBufferRenderSynchronizer` for HDR playback. On Apple Silicon Liquid Retina XDR displays in fullscreen mode, enqueuing compressed packets with synchronizer timebase activates hardware Direct Scanout (`IOMFBDisplay` / `IOFenceTransaction`). Seeking backward breaks PTS fences and causes a kernel/WindowServer deadlock (display freeze).
-  - To prevent this deadlock:
-    1. `AVSampleBufferDisplayLayer` is completely decoupled from `AVSampleBufferRenderSynchronizer`.
-    2. The display layer's `controlTimebase` is assigned to the host clock: `CMTimebaseCreateWithMasterClock(..., CMClockGetHostTimeClock(), ...)`.
+  - **CRITICAL INVARIANT:** `AVSampleBufferDisplayLayer` must remain completely decoupled from `AVSampleBufferRenderSynchronizer`.
+  - **Hardware Root Cause:** On Apple Silicon Liquid Retina XDR displays in fullscreen mode, `AVSampleBufferDisplayLayer` operates via hardware Direct Scanout (`IOMFBDisplay` / `IOFenceTransaction`). If the display layer is attached to `AVSampleBufferRenderSynchronizer`, calling `synchronizer.setRate(0.0)` on playback pause triggers a 30-second hardware fence deadlock in `WindowServer`, freezing event dispatch across all macOS windows until the display watchdog resets or `setRate(1.0)` is called.
+  - **Architecture Requirements:**
+    1. `AVSampleBufferDisplayLayer` is completely decoupled from `AVSampleBufferRenderSynchronizer` (`synchronizer` manages only audio via `audioReceiver`).
+    2. The display layer's `controlTimebase` is assigned to an independent host clock: `CMTimebaseCreateWithSourceClock(..., CMClockGetHostTimeClock(), ...)`, initialized with `rate = 1.0` and never paused.
     3. Frames are enqueued as uncompressed `CVPixelBuffer` buffers wrapped with `kCMSampleAttachmentKey_DisplayImmediately = true`.
     4. Frame delivery is paced by the `CADisplayLink` loop aligned to the synchronizer's audio/master clock time (`synchronizer.currentTime()`).
+    5. **Swift Deprecation Warning Handling:** Apple marked `displayLayer.enqueue` and `sampleBufferRenderer.enqueue` as deprecated in Swift to encourage migrating to `synchronizer.sampleBufferReceiver`. Because registering the display layer in `synchronizer` causes the aforementioned fullscreen Direct Scanout pause freeze, the engine deliberately uses statically cached selectors (`sel_registerName("enqueueSampleBuffer:")` and `sel_registerName("flush")`) via `sampleBufferRenderer.perform(...)`. Future agents must **never** attempt to "modernize" this by attaching `displayLayer` to `synchronizer`.
 - **Seamless Render Mode Switching:**
-  - Switching between `.metalToneMap` and `.system` toggles layer visibility (`isMetalLayerVisible`) and clears the display layer (`displayLayer.flush()`).
+  - Switching between `.metalToneMap` and `.system` toggles layer visibility (`isMetalLayerVisible`) and clears the display layer (`sampleBufferRenderer.flush()`).
   - Because all frames are decoded continuously into `FrameQueue`, handover between Metal and Native HDR occurs with zero latency and zero frame stalling.
-- **Pipeline Queue Hygiene:** On seek or render mode handover, `frameQueue.clear()`, `decoder.flush()`, and `displayLayer.flush()` must be executed to flush stale frames and prevent stutter or packet queue desynchronization.
+- **Pipeline Queue Hygiene:** On seek or render mode handover, `frameQueue.clear()`, `decoder.flush()`, and renderer flush must be executed to flush stale frames and prevent stutter or packet queue desynchronization.
 
 ### 3.2. Metal Tone-Mapping Color Engine (`HDRToneMapping.metal`)
 - **Input Format:** 10-bit P010 biplanar YCbCr (`r16Unorm` Y plane, `rg16Unorm` CbCr plane). Normalization must account for VideoToolbox MSB-alignment: `val * 65535.0 / 1023.0`.
