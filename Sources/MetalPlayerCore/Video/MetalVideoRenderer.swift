@@ -96,7 +96,8 @@ public final class MetalVideoRenderer: @unchecked Sendable {
     }
 
     private func setupPipeline() {
-        guard let defaultLibrary = try? device.makeDefaultLibrary(bundle: .module) ?? device.makeDefaultLibrary() else {
+        guard let defaultLibrary = (try? device.makeDefaultLibrary(bundle: .module)) ?? device.makeDefaultLibrary()
+        else {
             print("[MetalVideoRenderer] Failed to load Metal default library")
             return
         }
@@ -201,7 +202,7 @@ public final class MetalVideoRenderer: @unchecked Sendable {
         encoder.endEncoding()
 
         // Retain CVMetalTexture references until GPU finishes processing
-        let retainedTextures = (yTextureRef, uvTextureRef)
+        nonisolated(unsafe) let retainedTextures = (yTextureRef, uvTextureRef)
         commandBuffer.addCompletedHandler { _ in
             _ = retainedTextures
         }
