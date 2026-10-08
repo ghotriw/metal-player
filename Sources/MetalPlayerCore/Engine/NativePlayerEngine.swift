@@ -86,10 +86,9 @@ public final class NativePlayerEngine: PlayerEngine {
     public var audioTracks: [MediaDemuxer.AudioTrack] = []
     public var selectedAudioTrackId: Int = -1
 
-    public let displayLayer = AVSampleBufferDisplayLayer()
+    nonisolated(unsafe) public let displayLayer = AVSampleBufferDisplayLayer()
     public let metalRenderer = MetalVideoRenderer()
     public let audioRenderer = AVSampleBufferAudioRenderer()
-    public let videoReceiver: AVSampleBufferVideoRenderer.Receiver
     public let audioReceiver: AVSampleBufferAudioRenderer.Receiver
     private var videoFeedingTask: Task<Void, Never>?
     private var audioFeedingTask: Task<Void, Never>?
@@ -151,12 +150,23 @@ public final class NativePlayerEngine: PlayerEngine {
 
         metalRenderer?.uniforms.targetNits = configuration.targetNits
         metalRenderer?.uniforms.outputSharpness = configuration.sharpness
-        audioRenderer.volume = configuration.initialVolume
-
-        self.videoReceiver = synchronizer.sampleBufferReceiver(adding: displayLayer.sampleBufferRenderer)
+        // Synchronizer manages audio receiver and master clock timeline
         self.audioReceiver = synchronizer.sampleBufferReceiver(adding: audioRenderer)
         audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
         displayLayer.videoGravity = .resizeAspect
+
+        // Configure displayLayer with independent host timebase matching KSPlayer
+        var controlTimebase: CMTimebase?
+        CMTimebaseCreateWithSourceClock(
+            allocator: kCFAllocatorDefault,
+            sourceClock: CMClockGetHostTimeClock(),
+            timebaseOut: &controlTimebase
+        )
+        if let controlTimebase {
+            displayLayer.controlTimebase = controlTimebase
+            CMTimebaseSetTime(controlTimebase, time: .zero)
+            CMTimebaseSetRate(controlTimebase, rate: 1.0)
+        }
 
         let queue = self.frameQueue
         decoder.setOutputHandler { frame in
@@ -265,94 +275,100 @@ public final class NativePlayerEngine: PlayerEngine {
         guard previousMode != newMode else { return }
 
         if newMode == .system {
-            // Instant handover to Apple HDR: hide Metal layer immediately
             isMetalLayerVisible = false
-            frameQueue.clear()
-
-            let decoder = self.decoder
-            let feedingActive = isFeeding.withLock { $0 }
-            if isPlaying || feedingActive {
-                // If currently playing, stop video feeding, flush receiver, and restart feeding for system mode
-                stopFeedingVideo()
-                videoReceiver.flush()
-                isVideoDrainPaused.withLock { $0 = false }
-                let demuxer = self.demuxer
-                feedQueue.async { [weak self] in
-                    decoder.flush()
-                    // Re-sync demuxer video packets with audio playhead
-                    if let self {
-                        let curTime = self.synchronizer.currentTime().seconds
-                        if curTime > 0 {
-                            demuxer?.seek(to: curTime)
-                        }
-                        DispatchQueue.main.async {
-                            guard self.isFeeding.withLock({ $0 }) else { return }
-                            self.startFeedingVideo()
-                        }
-                    }
-                }
-            } else {
-                feedQueue.async {
-                    decoder.flush()
-                }
+            if !isPlaying {
+                renderCurrentFrame()
             }
         } else {
-            // Switching to Metal Tone Mapping
-            frameQueue.clear()
-            let feedingActive = isFeeding.withLock { $0 }
-            if isPlaying || feedingActive {
-                stopFeedingVideo()
-                videoReceiver.flush()
-                isVideoDrainPaused.withLock { $0 = false }
-                let demuxer = self.demuxer
-                let decoder = self.decoder
-                feedQueue.async { [weak self] in
-                    decoder.flush()
-                    if let self {
-                        let curTime = self.synchronizer.currentTime().seconds
-                        if curTime > 0 {
-                            demuxer?.seek(to: curTime)
-                        }
-                        DispatchQueue.main.async {
-                            guard self.isFeeding.withLock({ $0 }) else { return }
-                            self.startFeedingVideo()
-                        }
-                    }
-                }
-            } else {
+            if !isPlaying {
                 renderCurrentFrame()
                 isMetalLayerVisible = true
             }
         }
     }
 
+    nonisolated private func presentToDisplayLayer(pixelBuffer: CVPixelBuffer) {
+        var formatDescription: CMVideoFormatDescription?
+        let err = CMVideoFormatDescriptionCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescriptionOut: &formatDescription
+        )
+        guard err == noErr, let formatDesc = formatDescription else { return }
+
+        let timing = CMSampleTimingInfo(
+            duration: .invalid,
+            presentationTimeStamp: .zero,
+            decodeTimeStamp: .invalid
+        )
+        var sampleBuffer: CMSampleBuffer?
+        CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescription: formatDesc,
+            sampleTiming: [timing],
+            sampleBufferOut: &sampleBuffer
+        )
+        guard let sample = sampleBuffer else { return }
+
+        if let attachmentsArray = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true)
+            as? [NSMutableDictionary],
+            let dic = attachmentsArray.first
+        {
+            dic[kCMSampleAttachmentKey_DisplayImmediately] = true
+        }
+
+        nonisolated(unsafe) let layer = self.displayLayer
+        nonisolated(unsafe) let s = sample
+        layer.enqueue(s)
+    }
+
     nonisolated private func displayLinkTick() {
-        guard activeRenderMode == .metalToneMap else { return }
         let currentSyncTime = synchronizer.currentTime()
         guard currentSyncTime.isValid else { return }
 
         let start = CACurrentMediaTime()
         if let popped = frameQueue.popFrame(forSyncTime: currentSyncTime) {
-            metalRenderer?.render(pixelBuffer: popped.pixelBuffer)
             let durationMs = (CACurrentMediaTime() - start) * 1000.0
             let qCount = frameQueue.count
             let isPaused = isVideoDrainPaused.withLock { $0 }
             let driftMs = popped.pts.isValid ? (popped.pts.seconds - currentSyncTime.seconds) * 1000.0 : 0.0
             let dropped = frameQueue.droppedFramesCount
 
-            performanceMonitor.recordRenderedFrame(
-                durationMs: durationMs,
-                queueCount: qCount,
-                renderModeName: "Metal SDR",
-                isDrainPaused: isPaused,
-                avSyncDriftMs: driftMs,
-                droppedFrames: dropped
-            )
+            let mode = activeRenderMode
+            if mode == .metalToneMap {
+                metalRenderer?.render(pixelBuffer: popped.pixelBuffer)
+                performanceMonitor.recordRenderedFrame(
+                    durationMs: durationMs,
+                    queueCount: qCount,
+                    renderModeName: "Metal SDR",
+                    isDrainPaused: isPaused,
+                    avSyncDriftMs: driftMs,
+                    droppedFrames: dropped
+                )
 
-            if !isMetalLayerVisibleLock.withLock({ $0 }) {
-                isMetalLayerVisibleLock.withLock { $0 = true }
-                DispatchQueue.main.async { [weak self] in
-                    self?.isMetalLayerVisible = true
+                if !isMetalLayerVisibleLock.withLock({ $0 }) {
+                    isMetalLayerVisibleLock.withLock { $0 = true }
+                    DispatchQueue.main.async { [weak self] in
+                        self?.isMetalLayerVisible = true
+                    }
+                }
+            } else {
+                presentToDisplayLayer(pixelBuffer: popped.pixelBuffer)
+                performanceMonitor.recordRenderedFrame(
+                    durationMs: durationMs,
+                    queueCount: qCount,
+                    renderModeName: "Apple HDR (AVSBDL)",
+                    isDrainPaused: isPaused,
+                    avSyncDriftMs: driftMs,
+                    droppedFrames: dropped
+                )
+
+                if isMetalLayerVisibleLock.withLock({ $0 }) {
+                    isMetalLayerVisibleLock.withLock { $0 = false }
+                    DispatchQueue.main.async { [weak self] in
+                        self?.isMetalLayerVisible = false
+                    }
                 }
             }
         }
@@ -365,10 +381,18 @@ public final class NativePlayerEngine: PlayerEngine {
 
     public func renderCurrentFrame() {
         let currentSyncTime = synchronizer.currentTime()
-        if currentSyncTime.isValid, let buffer = frameQueue.getLatestFrame(forSyncTime: currentSyncTime) {
+        let buffer: CVPixelBuffer?
+        if currentSyncTime.isValid, let b = frameQueue.getLatestFrame(forSyncTime: currentSyncTime) {
+            buffer = b
+        } else {
+            buffer = frameQueue.getLastRenderedBuffer()
+        }
+
+        guard let buffer else { return }
+        if activeRenderMode == .metalToneMap {
             metalRenderer?.render(pixelBuffer: buffer)
-        } else if let lastBuffer = frameQueue.getLastRenderedBuffer() {
-            metalRenderer?.render(pixelBuffer: lastBuffer)
+        } else {
+            presentToDisplayLayer(pixelBuffer: buffer)
         }
     }
 
@@ -469,7 +493,7 @@ public final class NativePlayerEngine: PlayerEngine {
         isFeeding.withLock { $0 = false }
         stopFeedingVideo()
         stopFeedingAudio()
-        videoReceiver.flush()
+        displayLayer.flush()
         audioReceiver.flush()
         audioDecoder?.flush()
 
@@ -528,8 +552,6 @@ public final class NativePlayerEngine: PlayerEngine {
 
         let feedingLock = self.isFeeding
         let drainPausedLock = self.isVideoDrainPaused
-        let modeLock = self.activeRenderModeLock
-        let receiver = self.videoReceiver
         let decoder = self.decoder
         let queue = self.frameQueue
 
@@ -538,39 +560,24 @@ public final class NativePlayerEngine: PlayerEngine {
                 demuxer: demuxer,
                 decoder: decoder,
                 queue: queue,
-                receiver: receiver,
                 feedingLock: feedingLock,
-                drainPausedLock: drainPausedLock,
-                modeLock: modeLock
+                drainPausedLock: drainPausedLock
             )
         }
-    }
-
-    private nonisolated static func isPrerollSample(_ sample: CMSampleBuffer) -> Bool {
-        guard
-            let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false)
-                as? [NSDictionary], let first = attachments.first
-        else {
-            return false
-        }
-        return (first[kCMSampleAttachmentKey_DoNotDisplay] as? Bool) == true
     }
 
     private nonisolated static func runVideoFeeding(
         demuxer: MediaDemuxer,
         decoder: VTVideoDecoder,
         queue: FrameQueue,
-        receiver: AVSampleBufferVideoRenderer.Receiver,
         feedingLock: OSAllocatedUnfairLock<Bool>,
-        drainPausedLock: OSAllocatedUnfairLock<Bool>,
-        modeLock: OSAllocatedUnfairLock<RenderMode>
+        drainPausedLock: OSAllocatedUnfairLock<Bool>
     ) async {
         let sampleCountLock = OSAllocatedUnfairLock(initialState: 0)
         while !Task.isCancelled && feedingLock.withLock({ $0 }) {
-            // Cooperative backpressure for Metal mode
-            if modeLock.withLock({ $0 == .metalToneMap }) && queue.count >= 40 {
+            // Cooperative backpressure: pause decoding when queue has >= 40 frames
+            if queue.count >= 40 {
                 drainPausedLock.withLock { $0 = true }
-                // Suspend cooperative task until queue drains to <= 25 frames
                 while !Task.isCancelled && queue.count > 25 && feedingLock.withLock({ $0 }) {
                     try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
                 }
@@ -594,30 +601,15 @@ public final class NativePlayerEngine: PlayerEngine {
             if count <= 5 || count % 200 == 0 {
                 let pts = CMSampleBufferGetPresentationTimeStamp(sample)
                 print(
-                    "[NativePlayerEngine] Enqueued video sample #\(count), pts: \(CMTimeGetSeconds(pts))s"
+                    "[NativePlayerEngine] Decoding video sample #\(count), pts: \(CMTimeGetSeconds(pts))s, queueCount: \(queue.count)"
                 )
             }
 
-            if modeLock.withLock({ $0 == .metalToneMap }) {
-                let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
-                let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
-                    "EnqueueDecodeFrame", id: signpostID)
-                decoder.decode(sampleBuffer: sample)
-                PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueDecodeFrame", interval)
-            } else {
-                let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
-                let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
-                    "EnqueueNativeSample", id: signpostID)
-                let isPreroll = isPrerollSample(sample)
-                let readySample = CMReadySampleBuffer(unsafeBuffer: sample)
-                if isPreroll {
-                    _ = receiver.enqueueImmediately(readySample)
-                } else {
-                    _ = try? await receiver.enqueue(readySample)
-                    PlayerPerformanceMonitor.shared.recordNativeEnqueuedSample()
-                }
-                PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueNativeSample", interval)
-            }
+            let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
+            let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
+                "EnqueueDecodeFrame", id: signpostID)
+            decoder.decode(sampleBuffer: sample)
+            PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueDecodeFrame", interval)
         }
     }
 
@@ -736,7 +728,7 @@ public final class NativePlayerEngine: PlayerEngine {
         isFeeding.withLock { $0 = false }
         stopFeedingVideo()
         stopFeedingAudio()
-        videoReceiver.flush()
+        displayLayer.flush()
         audioReceiver.flush()
         audioDecoder?.flush()
         frameQueue.clear(resetDroppedFrames: true)
@@ -745,10 +737,8 @@ public final class NativePlayerEngine: PlayerEngine {
         let targetTime = CMTime(seconds: seconds, preferredTimescale: 1000)
 
         let decoder = self.decoder
-        let receiver = self.videoReceiver
-        let modeLock = self.activeRenderModeLock
 
-        seekTask = Task.detached(priority: .userInitiated) { [weak self, demuxer, decoder, receiver, modeLock] in
+        seekTask = Task.detached(priority: .userInitiated) { [weak self, demuxer, decoder] in
             decoder.flush()
             demuxer.seek(to: seconds)
 
@@ -766,8 +756,6 @@ public final class NativePlayerEngine: PlayerEngine {
                 Self.seekPreview(
                     demuxer: demuxer,
                     decoder: decoder,
-                    receiver: receiver,
-                    modeLock: modeLock,
                     seconds: seconds
                 )
                 guard !Task.isCancelled else { return }
@@ -784,22 +772,14 @@ public final class NativePlayerEngine: PlayerEngine {
     private nonisolated static func seekPreview(
         demuxer: MediaDemuxer,
         decoder: VTVideoDecoder,
-        receiver: AVSampleBufferVideoRenderer.Receiver,
-        modeLock: OSAllocatedUnfairLock<RenderMode>,
         seconds: Double
     ) {
-        let isMetalMode = modeLock.withLock { $0 == .metalToneMap }
         var attempts = 0
         var foundTarget = false
         while attempts < 120 && !foundTarget && !Task.isCancelled {
             if let sample = demuxer.nextVideoSample() {
                 let pts = CMSampleBufferGetPresentationTimeStamp(sample)
-                if isMetalMode {
-                    decoder.decode(sampleBuffer: sample)
-                } else {
-                    let readySample = CMReadySampleBuffer(unsafeBuffer: sample)
-                    _ = receiver.enqueueImmediately(readySample)
-                }
+                decoder.decode(sampleBuffer: sample)
                 attempts += 1
                 if CMTimeGetSeconds(pts) >= seconds {
                     foundTarget = true

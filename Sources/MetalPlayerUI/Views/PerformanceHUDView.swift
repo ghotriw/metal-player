@@ -40,60 +40,42 @@ public struct PerformanceHUDView: View {
                 color: .white
             )
 
-            if engine.activeRenderMode == .metalToneMap {
-                metricRow(
-                    label: "Render FPS:",
-                    value: String(format: "%.1f fps", metrics.renderFps),
-                    color: metrics.renderFps >= 55 ? .green : (metrics.renderFps >= 24 ? .white : .orange)
-                )
+            metricRow(
+                label: "Render FPS:",
+                value: String(format: "%.1f fps", metrics.renderFps),
+                color: metrics.renderFps >= 55 ? .green : (metrics.renderFps >= 24 ? .white : .orange)
+            )
 
-                metricRow(
-                    label: "Frame Render Time:",
-                    value: String(format: "%.2f ms", metrics.renderDurationMs),
-                    color: metrics.renderDurationMs > 16.6 ? .orange : .white
-                )
+            metricRow(
+                label: "Frame Delivery:",
+                value: String(format: "%.2f ms", metrics.renderDurationMs),
+                color: metrics.renderDurationMs > 16.6 ? .orange : .white
+            )
 
-                metricRow(
-                    label: "Buffer Queue:",
-                    value: "\(metrics.frameQueueCount) frames \(metrics.isDrainPaused ? "(Paused)" : "(Feeding)")",
-                    color: metrics.frameQueueCount < 5 ? .red : .white
-                )
+            metricRow(
+                label: "Buffer Queue:",
+                value: "\(metrics.frameQueueCount) frames \(metrics.isDrainPaused ? "(Paused)" : "(Feeding)")",
+                color: metrics.frameQueueCount < 5 ? .red : .white
+            )
 
-                metricRow(
-                    label: "Dropped Frames:",
-                    value: "\(metrics.droppedFrames)",
-                    color: metrics.droppedFrames > 0 ? .orange : .white
-                )
+            metricRow(
+                label: "Dropped Frames:",
+                value: "\(metrics.droppedFrames)",
+                color: metrics.droppedFrames > 0 ? .orange : .white
+            )
 
-                metricRow(
-                    label: "A/V Sync Drift:",
-                    value: String(format: "%+.1f ms", metrics.avSyncDriftMs),
-                    color: abs(metrics.avSyncDriftMs) > 100
-                        ? .red : (abs(metrics.avSyncDriftMs) > 60 ? .orange : .white)
-                )
-            } else {
-                metricRow(
-                    label: "Pipeline:",
-                    value: "Native Hardware Passthrough",
-                    color: Color.accentColor
-                )
+            metricRow(
+                label: "A/V Sync Drift:",
+                value: String(format: "%+.1f ms", metrics.avSyncDriftMs),
+                color: abs(metrics.avSyncDriftMs) > 100
+                    ? .red : (abs(metrics.avSyncDriftMs) > 60 ? .orange : .white)
+            )
 
+            if engine.activeRenderMode == .system {
                 metricRow(
                     label: "Layer Status:",
                     value: metrics.nativeLayerStatus,
                     color: metrics.nativeLayerStatus == "Rendering" ? .green : .white
-                )
-
-                metricRow(
-                    label: "Feed Rate:",
-                    value: String(format: "%.1f fps", metrics.nativeFeedRate),
-                    color: metrics.nativeFeedRate >= 23.0 ? .white : .orange
-                )
-
-                metricRow(
-                    label: "Enqueued Frames:",
-                    value: "\(metrics.nativeEnqueuedFrames)",
-                    color: .white
                 )
             }
 

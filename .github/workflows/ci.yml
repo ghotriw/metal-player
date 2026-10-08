@@ -21,6 +21,14 @@ jobs:
         run: |
           brew install ffmpeg pkg-config swift-format
 
+      # - name: Cache SPM dependencies
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: .build
+      #     key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'Package.swift') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-spm-
+
       - name: Lint check (code style)
         run: ./scripts/format.sh lint
 
