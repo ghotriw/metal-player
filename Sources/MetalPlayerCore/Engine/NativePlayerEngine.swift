@@ -1,13 +1,11 @@
 @preconcurrency import AVFoundation
 import AppKit
 import CFFmpeg
-import CoreMedia
+@preconcurrency import CoreMedia
 import Foundation
 import Observation
 import QuartzCore
 import os
-
-extension CMSampleBuffer: @retroactive @unchecked Sendable {}
 
 @Observable
 @MainActor
@@ -95,6 +93,7 @@ public final class NativePlayerEngine: PlayerEngine {
     public let audioReceiver: AVSampleBufferAudioRenderer.Receiver
     private var videoFeedingTask: Task<Void, Never>?
     private var audioFeedingTask: Task<Void, Never>?
+    private var seekTask: Task<Void, Never>?
 
     private let decoder = VTVideoDecoder()
     private var audioDecoder: FFAudioDecoder?
@@ -534,7 +533,7 @@ public final class NativePlayerEngine: PlayerEngine {
         let decoder = self.decoder
         let queue = self.frameQueue
 
-        videoFeedingTask = Task {
+        videoFeedingTask = Task.detached(priority: .userInitiated) {
             await Self.runVideoFeeding(
                 demuxer: demuxer,
                 decoder: decoder,
@@ -545,6 +544,16 @@ public final class NativePlayerEngine: PlayerEngine {
                 modeLock: modeLock
             )
         }
+    }
+
+    private nonisolated static func isPrerollSample(_ sample: CMSampleBuffer) -> Bool {
+        guard
+            let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false)
+                as? [NSDictionary], let first = attachments.first
+        else {
+            return false
+        }
+        return (first[kCMSampleAttachmentKey_DoNotDisplay] as? Bool) == true
     }
 
     private nonisolated static func runVideoFeeding(
@@ -563,15 +572,19 @@ public final class NativePlayerEngine: PlayerEngine {
                 drainPausedLock.withLock { $0 = true }
                 // Suspend cooperative task until queue drains to <= 25 frames
                 while !Task.isCancelled && queue.count > 25 && feedingLock.withLock({ $0 }) {
-                    try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
+                    try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
                 }
                 drainPausedLock.withLock { $0 = false }
                 if Task.isCancelled || !feedingLock.withLock({ $0 }) { break }
             }
 
             guard let sample = demuxer.nextVideoSample() else {
-                print("[NativePlayerEngine] Demuxer returned nil for video.")
-                break
+                if demuxer.isEOF {
+                    print("[NativePlayerEngine] Demuxer reached EOF for video.")
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
+                continue
             }
 
             let count = sampleCountLock.withLock { count -> Int in
@@ -596,9 +609,13 @@ public final class NativePlayerEngine: PlayerEngine {
                 let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
                     "EnqueueNativeSample", id: signpostID)
                 let readySample = CMReadySampleBuffer(unsafeBuffer: sample)
-                _ = try? await receiver.enqueue(readySample)
+                if isPrerollSample(sample) {
+                    _ = receiver.enqueueImmediately(readySample)
+                } else {
+                    _ = try? await receiver.enqueue(readySample)
+                    PlayerPerformanceMonitor.shared.recordNativeEnqueuedSample()
+                }
                 PlayerPerformanceMonitor.shared.signposter.endInterval("EnqueueNativeSample", interval)
-                PlayerPerformanceMonitor.shared.recordNativeEnqueuedSample()
             }
         }
     }
@@ -611,7 +628,7 @@ public final class NativePlayerEngine: PlayerEngine {
         let receiver = self.audioReceiver
         let audioTimebase = demuxer.audioTimebase
 
-        audioFeedingTask = Task {
+        audioFeedingTask = Task.detached(priority: .userInitiated) {
             await Self.runAudioFeeding(
                 demuxer: demuxer,
                 audioDecoder: aDecoder,
@@ -630,7 +647,13 @@ public final class NativePlayerEngine: PlayerEngine {
         audioTimebase: AVRational
     ) async {
         while !Task.isCancelled && feedingLock.withLock({ $0 }) {
-            guard let packet = demuxer.nextAudioPacket() else { break }
+            guard let packet = demuxer.nextAudioPacket() else {
+                if demuxer.isEOF {
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
+                continue
+            }
             let pcmBuffers = audioDecoder.decode(
                 packetData: packet.data,
                 pts: packet.pts,
@@ -695,6 +718,8 @@ public final class NativePlayerEngine: PlayerEngine {
         isFeeding.withLock { $0 = false }
         stopFeedingVideo()
         stopFeedingAudio()
+        seekTask?.cancel()
+        seekTask = nil
         isPlaying = false
         performanceMonitor.handlePlaybackStateChange(isPlaying: false)
     }
@@ -728,15 +753,20 @@ public final class NativePlayerEngine: PlayerEngine {
         let receiver = self.videoReceiver
         let modeLock = self.activeRenderModeLock
 
-        Task {
+        seekTask = Task.detached(priority: .userInitiated) { [weak self, demuxer, decoder, receiver, modeLock] in
             decoder.flush()
             demuxer.seek(to: seconds)
 
+            guard !Task.isCancelled else { return }
+
             if wasPlaying {
-                self.startFeeding()
-                self.synchronizer.setRate(1.0, time: targetTime)
-                self.displayLink?.isPaused = false
-                self.isPlaying = true
+                await MainActor.run {
+                    guard let self, !Task.isCancelled else { return }
+                    self.startFeeding()
+                    self.synchronizer.setRate(1.0, time: targetTime)
+                    self.displayLink?.isPaused = false
+                    self.isPlaying = true
+                }
             } else {
                 Self.seekPreview(
                     demuxer: demuxer,
@@ -745,8 +775,12 @@ public final class NativePlayerEngine: PlayerEngine {
                     modeLock: modeLock,
                     seconds: seconds
                 )
-                self.synchronizer.setRate(0.0, time: targetTime)
-                self.renderCurrentFrame()
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    guard let self, !Task.isCancelled else { return }
+                    self.synchronizer.setRate(0.0, time: targetTime)
+                    self.renderCurrentFrame()
+                }
             }
         }
         print("[NativePlayerEngine] Seek initiated asynchronously to:", targetTime.seconds)
@@ -762,7 +796,7 @@ public final class NativePlayerEngine: PlayerEngine {
         let isMetalMode = modeLock.withLock { $0 == .metalToneMap }
         var attempts = 0
         var foundTarget = false
-        while attempts < 120 && !foundTarget {
+        while attempts < 120 && !foundTarget && !Task.isCancelled {
             if let sample = demuxer.nextVideoSample() {
                 let pts = CMSampleBufferGetPresentationTimeStamp(sample)
                 if isMetalMode {
@@ -801,6 +835,8 @@ public final class NativePlayerEngine: PlayerEngine {
     }
 
     isolated deinit {
+        seekTask?.cancel()
+        seekTask = nil
         if let observer = timeObserver {
             synchronizer.removeTimeObserver(observer)
         }

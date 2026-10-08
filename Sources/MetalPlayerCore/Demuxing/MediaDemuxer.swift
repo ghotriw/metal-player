@@ -98,6 +98,12 @@ public final class MediaDemuxer: @unchecked Sendable {
     private var contentLightLevel: Data?
 
     private let lock = NSLock()
+    private var isEOFInternal: Bool = false
+    public var isEOF: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return isEOFInternal
+    }
 
     public init?(url: String) {
         var ctx: UnsafeMutablePointer<AVFormatContext>? = nil
@@ -726,6 +732,9 @@ public final class MediaDemuxer: @unchecked Sendable {
                 av_packet_unref(&pkt)
             }
         }
+        if videoQueue.isEmpty && audioQueue.isEmpty {
+            self.isEOFInternal = true
+        }
         return nil
     }
 
@@ -779,6 +788,9 @@ public final class MediaDemuxer: @unchecked Sendable {
                 av_packet_unref(&pkt)
             }
         }
+        if videoQueue.isEmpty && audioQueue.isEmpty {
+            self.isEOFInternal = true
+        }
         return nil
     }
 
@@ -789,6 +801,7 @@ public final class MediaDemuxer: @unchecked Sendable {
         audioQueue.removeAll()
         videoQueue.removeAll()
         lastAudioPts = -1
+        isEOFInternal = false
         let target = Int64(seconds * Double(timebase.den) / Double(timebase.num))
         self.targetPts = target
         let ret = av_seek_frame(ctx, Int32(videoStreamIndex), target, AVSEEK_FLAG_BACKWARD)
