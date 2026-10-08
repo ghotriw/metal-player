@@ -4,13 +4,13 @@ import MetalPlayerUI
 import SwiftUI
 
 @MainActor
-final class PlayerWindowController: NSWindowController, NSWindowDelegate {
-    let engine: NativePlayerEngine
-    let uiState = PlayerUIState()
-    var onClose: (() -> Void)?
-    var onKeyStatusChanged: ((Bool) -> Void)?
+public final class PlayerWindowController: NSWindowController, NSWindowDelegate {
+    public let engine: NativePlayerEngine
+    public let uiState = PlayerUIState()
+    public var onClose: (() -> Void)?
+    public var onKeyStatusChanged: ((Bool) -> Void)?
 
-    func applyConfiguration(_ config: PlayerConfiguration) {
+    public func applyConfiguration(_ config: PlayerConfiguration) {
         engine.isToneMappingPermitted = config.enableToneMapping
         engine.metalSharpness = config.sharpness
         engine.metalTargetNits = config.targetNits
@@ -22,7 +22,7 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    init(configuration: PlayerConfiguration = PlayerConfiguration()) {
+    public init(configuration: PlayerConfiguration = PlayerConfiguration()) {
         self.engine = NativePlayerEngine(configuration: configuration)
         let window = PlayerWindow(
             contentRect: NSRect(x: 100, y: 100, width: 960, height: 540),
@@ -61,6 +61,8 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
                 self?.toggleFullscreen()
             }
         )
+        .focusedSceneValue(\.playerActions, self)
+
         let hostingView = NSHostingView(rootView: contentView)
         window.contentView = hostingView
         window.initialFirstResponder = hostingView
@@ -70,11 +72,11 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func openFile(url: URL) {
+    public func openFile(url: URL) {
         openStream(url: url, headers: [:])
     }
 
-    func openStream(url: URL, headers: [String: String]) {
+    public func openStream(url: URL, headers: [String: String]) {
         let isNetwork = MediaDemuxer.isNetworkURL(url.absoluteString)
         window?.title =
             isNetwork
@@ -92,12 +94,12 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         onKeyStatusChanged?(true)
     }
 
-    func exitFullscreen() {
+    public func exitFullscreen() {
         guard let window, window.styleMask.contains(.fullScreen) else { return }
         window.toggleFullScreen(nil)
     }
 
-    override func cancelOperation(_ sender: Any?) {
+    public override func cancelOperation(_ sender: Any?) {
         if window?.styleMask.contains(.fullScreen) == true {
             exitFullscreen()
         } else {
@@ -128,18 +130,18 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    func windowDidBecomeKey(_ notification: Notification) {
+    public func windowDidBecomeKey(_ notification: Notification) {
         if let contentView = window?.contentView {
             window?.makeFirstResponder(contentView)
         }
         onKeyStatusChanged?(true)
     }
 
-    func windowDidResignKey(_ notification: Notification) {
+    public func windowDidResignKey(_ notification: Notification) {
         onKeyStatusChanged?(false)
     }
 
-    func windowWillEnterFullScreen(_ notification: Notification) {
+    public func windowWillEnterFullScreen(_ notification: Notification) {
         updateToolbar(isFullscreen: true)
         window?.titleVisibility = .visible
         window?.titlebarAppearsTransparent = false
@@ -149,31 +151,31 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+    public func windowDidFailToEnterFullScreen(_ window: NSWindow) {
         updateToolbar(isFullscreen: false)
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         uiState.isFullscreen = false
     }
 
-    func windowWillExitFullScreen(_ notification: Notification) {
+    public func windowWillExitFullScreen(_ notification: Notification) {
         window?.titleVisibility = .hidden
     }
 
-    func windowDidExitFullScreen(_ notification: Notification) {
+    public func windowDidExitFullScreen(_ notification: Notification) {
         updateToolbar(isFullscreen: false)
         window?.titlebarAppearsTransparent = true
         uiState.isFullscreen = false
     }
 
-    func windowWillClose(_ notification: Notification) {
+    public func windowWillClose(_ notification: Notification) {
         engine.stop()
         onClose?()
     }
 }
 
 extension PlayerWindowController: PlayerActions {
-    var renderMode: RenderMode {
+    public var renderMode: RenderMode {
         get { engine.renderMode }
         set {
             engine.renderMode = newValue
@@ -181,7 +183,7 @@ extension PlayerWindowController: PlayerActions {
         }
     }
 
-    var metalSharpness: Float {
+    public var metalSharpness: Float {
         get { engine.metalSharpness }
         set {
             engine.metalSharpness = newValue
@@ -189,51 +191,51 @@ extension PlayerWindowController: PlayerActions {
         }
     }
 
-    var isMuted: Bool {
+    public var isMuted: Bool {
         engine.isMuted
     }
 
-    var showDebugHUD: Bool {
+    public var showDebugHUD: Bool {
         engine.showDebugHUD
     }
 
-    func togglePlayPause() {
+    public func togglePlayPause() {
         engine.togglePlayPause()
         uiState.showControlsTemporarily()
     }
 
-    func stepFrameForward() {
+    public func stepFrameForward() {
         engine.stepFrameForward()
         uiState.showControlsTemporarily()
     }
 
-    func stepFrameBackward() {
+    public func stepFrameBackward() {
         engine.stepFrameBackward()
         uiState.showControlsTemporarily()
     }
 
-    func seekRelative(by seconds: Double) {
+    public func seekRelative(by seconds: Double) {
         engine.seekRelative(by: seconds)
         uiState.showControlsTemporarily()
     }
 
-    func stepVolume(by delta: Float) {
+    public func stepVolume(by delta: Float) {
         engine.stepVolume(by: delta)
         uiState.showControlsTemporarily()
     }
 
-    func toggleMute() {
+    public func toggleMute() {
         engine.toggleMute()
         uiState.showControlsTemporarily()
     }
 
-    func toggleDebugHUD() {
+    public func toggleDebugHUD() {
         withAnimation {
             engine.toggleDebugHUD()
         }
     }
 
-    func toggleFullscreen() {
+    public func toggleFullscreen() {
         window?.toggleFullScreen(nil)
     }
 }

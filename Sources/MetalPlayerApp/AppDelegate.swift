@@ -1,5 +1,6 @@
 import AppKit
 import MetalPlayerCore
+import MetalPlayerKit
 import MetalPlayerUI
 import Observation
 import SwiftUI

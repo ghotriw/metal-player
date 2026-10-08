@@ -3,10 +3,10 @@ import MetalPlayerCore
 import MetalPlayerUI
 
 @MainActor
-final class PlayerWindow: NSWindow {
-    weak var actionHandler: (any PlayerActions)?
+public final class PlayerWindow: NSWindow {
+    public weak var actionHandler: (any PlayerActions)?
 
-    override func sendEvent(_ event: NSEvent) {
+    public override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, handleHardwareKey(event) {
             return
         }

@@ -13,7 +13,7 @@ The goal is to evolve the dual-engine video rendering core into a complete stand
 - [x] **Hardware HEVC VideoToolbox Decoder:** P010 biplanar YCbCr, MSB normalization.
 - [x] **Dynamic Color Metadata:** Extract primaries/TRC/matrix from FFmpeg `codecpar` and NAL SEI/VUI.
 - [x] **Annex B & MP4/HVCC Normalization:** Robust container support for MKV, TS, MP4, and raw HEVC streams.
-- [x] **Modular SPM Decomposition:** `MetalPlayerCore` (pure system library without `unsafeFlags`), `MetalPlayerUI`, `MetalPlayerApp`.
+- [x] **Modular SPM Decomposition:** `MetalPlayerCore` (pure system library without `unsafeFlags`), `MetalPlayerUI`, `MetalPlayerKit`, `MetalPlayerApp`.
 
 ---
 

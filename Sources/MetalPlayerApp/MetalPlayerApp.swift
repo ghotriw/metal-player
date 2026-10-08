@@ -1,5 +1,6 @@
 import AppKit
 import MetalPlayerCore
+import MetalPlayerKit
 import MetalPlayerUI
 import SwiftUI
 
@@ -26,7 +27,7 @@ struct MetalPlayerApp: App {
                 .keyboardShortcut("u", modifiers: .command)
             }
 
-            PlayerCommands(appDelegate: appDelegate)
+            PlayerCommands(fallbackPlayer: { appDelegate.activePlayer })
         }
     }
 }

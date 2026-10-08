@@ -2,15 +2,19 @@ import MetalPlayerCore
 import MetalPlayerUI
 import SwiftUI
 
-struct PlayerCommands: Commands {
+public struct PlayerCommands: Commands {
     @FocusedValue(\.playerActions) private var focusedPlayer: (any PlayerActions)?
-    let appDelegate: AppDelegate
+    private let fallbackPlayer: (@MainActor () -> (any PlayerActions)?)?
 
-    private var playerActions: (any PlayerActions)? {
-        focusedPlayer ?? appDelegate.activePlayer
+    public init(fallbackPlayer: (@MainActor () -> (any PlayerActions)?)? = nil) {
+        self.fallbackPlayer = fallbackPlayer
     }
 
-    var body: some Commands {
+    private var playerActions: (any PlayerActions)? {
+        focusedPlayer ?? fallbackPlayer?()
+    }
+
+    public var body: some Commands {
         CommandMenu("Playback") {
             Button("Play / Pause") {
                 playerActions?.togglePlayPause()
