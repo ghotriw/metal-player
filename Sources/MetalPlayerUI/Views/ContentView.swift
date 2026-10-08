@@ -42,12 +42,33 @@ public struct ContentView: View {
                 onToggleFullscreen?()
             }
 
-            // Subtle loading indicator while engine is parsing/decoding first frame
-            if !engine.isLoaded {
+            // Subtle loading indicator while engine is parsing/decoding first frame or buffering stream
+            if (engine.isLoading || !engine.isLoaded) && engine.loadError == nil {
                 ProgressView()
                     .controlSize(.large)
                     .tint(.white)
                     .shadow(radius: 8)
+            }
+
+            // Error display banner if stream/file fails to load
+            if let error = engine.loadError {
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.yellow)
+                    Text("Playback Error")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                    Text(error)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.8))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
+                .padding(20)
+                .background(.ultraThinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .shadow(radius: 12)
             }
 
             // Performance Telemetry HUD

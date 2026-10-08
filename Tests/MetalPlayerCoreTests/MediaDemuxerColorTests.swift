@@ -194,4 +194,24 @@ struct MediaDemuxerColorTests {
         }
         #expect(detectedProfile5 == true)
     }
+
+    @Test("InterruptContext cancellation state behaves correctly")
+    func testInterruptContext() {
+        let ctx = MediaDemuxer.InterruptContext()
+        #expect(ctx.isCancelled == false)
+
+        ctx.cancel()
+        #expect(ctx.isCancelled == true)
+    }
+
+    @Test("Demuxer initializes with custom headers dictionary without breaking")
+    func testDemuxerWithHeadersParameter() {
+        let referencePath = "/Users/ghotriw/w_hdm_full.mkv"
+        guard FileManager.default.fileExists(atPath: referencePath) else { return }
+
+        let headers = ["X-Custom-Token": "secret123", "User-Agent": "MetalPlayerTest"]
+        let demuxer = MediaDemuxer(url: referencePath, headers: headers)
+        #expect(demuxer != nil)
+        #expect(demuxer?.width == 3840)
+    }
 }

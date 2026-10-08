@@ -19,6 +19,11 @@ struct MetalPlayerApp: App {
                     appDelegate.promptOpenFile()
                 }
                 .keyboardShortcut("o", modifiers: .command)
+
+                Button("Open URL…") {
+                    appDelegate.promptOpenURL()
+                }
+                .keyboardShortcut("u", modifiers: .command)
             }
 
             PlayerCommands(appDelegate: appDelegate)

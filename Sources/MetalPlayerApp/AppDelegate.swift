@@ -20,10 +20,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let parsed = PlayerConfiguration.parse(base: baseConfig)
         self.configuration = parsed.configuration
 
-        if let mediaPath = parsed.mediaPath, FileManager.default.fileExists(atPath: mediaPath) {
-            openMediaFile(at: URL(fileURLWithPath: mediaPath))
-            NSApp.activate()
-            return
+        if let mediaPath = parsed.mediaPath {
+            if MediaDemuxer.isNetworkURL(mediaPath), let url = URL(string: mediaPath) {
+                openStream(url: url, headers: parsed.configuration.httpHeaders)
+                NSApp.activate()
+                return
+            } else if FileManager.default.fileExists(atPath: mediaPath) {
+                openMediaFile(at: URL(fileURLWithPath: mediaPath))
+                NSApp.activate()
+                return
+            }
         }
 
         showWelcomeWindow()
@@ -37,6 +43,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             welcomeWindowController = WelcomeWindowController(
                 onOpenURL: { [weak self] url in
                     self?.openMediaFile(at: url)
+                },
+                onPromptOpenURL: { [weak self] in
+                    self?.promptOpenURL()
                 }
             )
         }
@@ -45,6 +54,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func openMediaFile(at url: URL) {
+        openStream(url: url, headers: [:])
+    }
+
+    func openStream(url: URL, headers: [String: String]) {
         if playerWindowController == nil {
             let controller = PlayerWindowController(configuration: configuration)
             controller.onClose = { [weak self] in
@@ -62,8 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Close/hide welcome window
         welcomeWindowController?.close()
 
-        // Open file in main player window
-        playerWindowController?.openFile(url: url)
+        // Open stream or file in main player window
+        playerWindowController?.openStream(url: url, headers: headers)
         isPlayerActive = true
         activePlayer = playerWindowController
     }
@@ -76,6 +89,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             welcomeWindowController?.promptOpenFile()
         }
+    }
+
+    func promptOpenURL() {
+        let parentWindow: NSWindow? =
+            (playerWindowController?.window?.isVisible == true)
+            ? playerWindowController?.window
+            : welcomeWindowController?.window
+
+        guard let parent = parentWindow else { return }
+
+        let sheetWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 480, height: 320),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+
+        let sheetView = OpenURLSheetView(
+            onOpen: { [weak self, weak sheetWindow, weak parent] url, headers in
+                if let sheetWindow, let parent {
+                    parent.endSheet(sheetWindow)
+                }
+                self?.openStream(url: url, headers: headers)
+            },
+            onCancel: { [weak sheetWindow, weak parent] in
+                if let sheetWindow, let parent {
+                    parent.endSheet(sheetWindow)
+                }
+            }
+        )
+
+        sheetWindow.contentView = NSHostingView(rootView: sheetView)
+        parent.beginSheet(sheetWindow)
     }
 
     func updateConfiguration(_ newConfig: PlayerConfiguration) {

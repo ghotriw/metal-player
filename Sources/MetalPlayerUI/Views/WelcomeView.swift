@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 public struct WelcomeView: View {
     public var onOpenFile: () -> Void
+    public var onOpenURL: (() -> Void)?
     public var onFileDropped: (String) -> Void
 
     @Environment(\.colorScheme) private var colorScheme
@@ -11,9 +12,11 @@ public struct WelcomeView: View {
 
     public init(
         onOpenFile: @escaping () -> Void,
+        onOpenURL: (() -> Void)? = nil,
         onFileDropped: @escaping (String) -> Void
     ) {
         self.onOpenFile = onOpenFile
+        self.onOpenURL = onOpenURL
         self.onFileDropped = onFileDropped
     }
 
@@ -56,16 +59,13 @@ public struct WelcomeView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.large)
 
-                    Button(action: {}) {
+                    Button(action: { onOpenURL?() }) {
                         Label("Open URL…", systemImage: "link")
                             .font(.system(size: 13, weight: .medium))
                             .frame(minWidth: 120, minHeight: 28)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
-                    .disabled(true)
-                    .opacity(0.55)
-                    .help("Open URL will be available in a future update")
                 }
             }
             .padding(.horizontal, 40)

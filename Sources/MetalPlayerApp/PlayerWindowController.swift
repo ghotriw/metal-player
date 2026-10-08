@@ -71,8 +71,17 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func openFile(url: URL) {
-        window?.title = url.lastPathComponent
-        engine.load(path: url.path)
+        openStream(url: url, headers: [:])
+    }
+
+    func openStream(url: URL, headers: [String: String]) {
+        let isNetwork = MediaDemuxer.isNetworkURL(url.absoluteString)
+        window?.title =
+            isNetwork
+            ? (url.lastPathComponent.isEmpty ? url.host ?? url.absoluteString : url.lastPathComponent)
+            : url.lastPathComponent
+        let pathString = isNetwork ? url.absoluteString : url.path
+        engine.load(path: pathString, headers: headers)
         showWindow(nil)
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
@@ -158,7 +167,7 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        engine.pause()
+        engine.stop()
         onClose?()
     }
 }

@@ -14,6 +14,11 @@ public final class NativePlayerEngine: PlayerEngine {
     public var duration: Double = 0
     public var isPlaying: Bool = false
     public var isLoaded: Bool = false
+    public var isLoading: Bool = false
+    public var loadError: String? = nil
+    private var loadingTask: Task<Void, Never>?
+    private var currentInterruptContext: MediaDemuxer.InterruptContext?
+    private var currentLoadID = UUID()
     public var mediaTitle: String = ""
     public var videoWidth: Int = 0
     public var videoHeight: Int = 0
@@ -400,108 +405,220 @@ public final class NativePlayerEngine: PlayerEngine {
     }
 
     public func load(path: String) {
-        print("[NativePlayerEngine] Loading:", path)
-        guard let newDemuxer = MediaDemuxer(url: path) else {
-            print("[NativePlayerEngine] Failed to open file with MediaDemuxer:", path)
+        load(path: path, headers: [:])
+    }
+
+    public func load(path: String, headers: [String: String]) {
+        let isNetwork = MediaDemuxer.isNetworkURL(path)
+        if isNetwork {
+            loadingTask?.cancel()
+            loadingTask = Task { @MainActor [weak self] in
+                await self?.loadAsync(path: path, headers: headers)
+            }
+        } else {
+            loadSync(path: path, headers: headers)
+        }
+    }
+
+    public func loadAsync(path: String) async {
+        await loadAsync(path: path, headers: [:])
+    }
+
+    public func loadAsync(path: String, headers: [String: String]) async {
+        print("[NativePlayerEngine] Loading async:", path, "with headers count:", headers.count)
+
+        // Generate a new load ID and cancel any in-flight requests immediately
+        let loadID = UUID()
+        self.currentLoadID = loadID
+
+        currentInterruptContext?.cancel()
+        demuxer?.cancel()
+        demuxer = nil
+
+        let interruptContext = MediaDemuxer.InterruptContext()
+        self.currentInterruptContext = interruptContext
+
+        isFeeding.withLock { $0 = false }
+        stopFeedingVideo()
+        stopFeedingAudio()
+        displayLink?.isPaused = true
+        synchronizer.setRate(0.0, time: synchronizer.currentTime())
+        isPlaying = false
+        isLoaded = false
+        isLoading = true
+        loadError = nil
+
+        let task = Task.detached(priority: .userInitiated) { () -> MediaDemuxer? in
+            guard !Task.isCancelled, !interruptContext.isCancelled else { return nil }
+            return MediaDemuxer(url: path, headers: headers, interruptContext: interruptContext)
+        }
+
+        let newDemuxer = await task.value
+
+        // Prevent race condition: if another load started or task was cancelled, discard result
+        guard self.currentLoadID == loadID, !Task.isCancelled, !interruptContext.isCancelled else {
+            print("[NativePlayerEngine] Loading was superseded or cancelled for:", path)
             return
         }
 
-        self.demuxer = newDemuxer
-        self.duration = newDemuxer.durationSeconds
-        self.videoWidth = newDemuxer.width
-        self.videoHeight = newDemuxer.height
-        self.mediaTitle = URL(fileURLWithPath: path).lastPathComponent
-        self.audioTracks = newDemuxer.audioTracks
-        self.selectedAudioTrackId = newDemuxer.selectedAudioTrackIndex
+        guard let demuxer = newDemuxer else {
+            print("[NativePlayerEngine] Failed to open file or network stream:", path)
+            self.isLoading = false
+            self.loadError = "Failed to open stream or media file."
+            return
+        }
+
+        applyLoadedDemuxer(demuxer, path: path)
+    }
+
+    private func loadSync(path: String, headers: [String: String]) {
+        print("[NativePlayerEngine] Loading sync:", path)
+
+        let loadID = UUID()
+        self.currentLoadID = loadID
+
+        loadingTask?.cancel()
+        loadingTask = nil
+        currentInterruptContext?.cancel()
+        currentInterruptContext = nil
+        demuxer?.cancel()
+        demuxer = nil
+
+        isFeeding.withLock { $0 = false }
+        stopFeedingVideo()
+        stopFeedingAudio()
+        displayLink?.isPaused = true
+        synchronizer.setRate(0.0, time: synchronizer.currentTime())
+        isPlaying = false
+        isLoaded = false
+        isLoading = false
+        loadError = nil
+
+        guard let demuxer = MediaDemuxer(url: path, headers: headers) else {
+            print("[NativePlayerEngine] Failed to open file:", path)
+            self.loadError = "Failed to open media file."
+            return
+        }
+
+        applyLoadedDemuxer(demuxer, path: path)
+    }
+
+    public func stop() {
+        loadingTask?.cancel()
+        loadingTask = nil
+        currentInterruptContext?.cancel()
+        currentInterruptContext = nil
+        demuxer?.cancel()
+        demuxer = nil
+        pause()
+    }
+
+    private func applyLoadedDemuxer(_ demuxer: MediaDemuxer, path: String) {
+        self.demuxer = demuxer
+        self.duration = demuxer.durationSeconds
+        self.videoWidth = demuxer.width
+        self.videoHeight = demuxer.height
+        if path.hasPrefix("http://") || path.hasPrefix("https://") {
+            if let url = URL(string: path) {
+                self.mediaTitle = url.lastPathComponent.isEmpty ? url.host ?? path : url.lastPathComponent
+            } else {
+                self.mediaTitle = path
+            }
+        } else {
+            self.mediaTitle = URL(fileURLWithPath: path).lastPathComponent
+        }
+        self.audioTracks = demuxer.audioTracks
+        self.selectedAudioTrackId = demuxer.selectedAudioTrackIndex
+        self.isLoading = false
         self.isLoaded = true
+        self.loadError = nil
+
         self.metalRenderer?.updateUniforms { uniforms in
-            uniforms.sourcePeakNits = newDemuxer.maxPeakNits
-            if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
+            uniforms.sourcePeakNits = demuxer.maxPeakNits
+            if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
                 uniforms.colorPrimaries = 1
-            } else if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3
-                || newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65
+            } else if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3
+                || demuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65
             {
                 uniforms.colorPrimaries = 2
             } else {
                 uniforms.colorPrimaries = 0  // BT.2020
             }
 
-            if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2
-                || newDemuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma
+            if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2
+                || demuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma
             {
                 uniforms.transferFunction = 2  // SDR
-            } else if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
+            } else if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
                 uniforms.transferFunction = 1  // HLG
             } else {
                 uniforms.transferFunction = 0  // PQ
             }
 
-            uniforms.bitDepth = UInt32(newDemuxer.bitDepth)
-            uniforms.isFullRange = newDemuxer.isFullRange ? 1 : 0
-            if newDemuxer.isDolbyVisionProfile5 {
+            uniforms.bitDepth = UInt32(demuxer.bitDepth)
+            uniforms.isFullRange = demuxer.isFullRange ? 1 : 0
+            if demuxer.isDolbyVisionProfile5 {
                 uniforms.colorSpaceMode = 2  // Dolby Vision IPT / ICtCp
-            } else if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
+            } else if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
                 uniforms.colorSpaceMode = 1  // BT.709
             } else {
                 uniforms.colorSpaceMode = 0  // Standard BT.2020 YCbCr
             }
         }
+
         // Update telemetry metadata
         let primariesStr: String = {
-            if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 { return "BT.709" }
-            if newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3
-                || newDemuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65
+            if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 { return "BT.709" }
+            if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3
+                || demuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65
             {
                 return "DCI-P3"
             }
             return "BT.2020"
         }()
         let transferStr: String = {
-            if newDemuxer.isDolbyVisionProfile5 { return "Dolby Vision (ICtCp)" }
-            if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2
-                || newDemuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma
+            if demuxer.isDolbyVisionProfile5 { return "Dolby Vision (ICtCp)" }
+            if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2
+                || demuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma
             {
                 return "BT.709 / SDR"
             }
-            if newDemuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG { return "HLG" }
+            if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG { return "HLG" }
             return "PQ (ST 2084)"
         }()
-        performanceMonitor.updateStreamMetadata(
-            resolution: "\(newDemuxer.width)x\(newDemuxer.height)",
-            codecName: newDemuxer.codec == .hevc ? "HEVC" : "H.264",
-            bitDepth: newDemuxer.bitDepth,
+        self.performanceMonitor.updateStreamMetadata(
+            resolution: "\(demuxer.width)x\(demuxer.height)",
+            codecName: demuxer.codec == .hevc ? "HEVC" : "H.264",
+            bitDepth: demuxer.bitDepth,
             colorPrimaries: primariesStr,
             transferFunction: transferStr,
-            sourcePeakNits: newDemuxer.maxPeakNits,
+            sourcePeakNits: demuxer.maxPeakNits,
             targetNits: 203.0
         )
 
         print(
-            "[NativePlayerEngine] Loaded successfully. Duration: \(duration)s, peakNits: \(newDemuxer.maxPeakNits), formatDesc: \(String(describing: newDemuxer.formatDescription))"
+            "[NativePlayerEngine] Loaded successfully. Duration: \(self.duration)s, peakNits: \(demuxer.maxPeakNits), formatDesc: \(String(describing: demuxer.formatDescription))"
         )
 
         // Initialize audio decoder if audio stream is present
-        if newDemuxer.hasAudio, let audioParams = newDemuxer.getAudioCodecParameters() {
-            let decoder = FFAudioDecoder(codecParameters: audioParams, timebase: newDemuxer.audioTimebase)
+        if demuxer.hasAudio, let audioParams = demuxer.getAudioCodecParameters() {
+            let decoder = FFAudioDecoder(codecParameters: audioParams, timebase: demuxer.audioTimebase)
             self.audioDecoder = decoder
             self.audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
             print(
-                "[NativePlayerEngine] Audio decoder initialized: \(String(describing: self.audioDecoder != nil)), channels: \(newDemuxer.audioChannels), rate: \(newDemuxer.audioSampleRate)"
+                "[NativePlayerEngine] Audio decoder initialized: \(String(describing: self.audioDecoder != nil)), channels: \(demuxer.audioChannels), rate: \(demuxer.audioSampleRate)"
             )
         } else {
             self.audioDecoder = nil
             print("[NativePlayerEngine] No audio track found or failed to get codec parameters")
         }
 
-        isFeeding.withLock { $0 = false }
-        stopFeedingVideo()
-        stopFeedingAudio()
-        _ = sampleBufferRenderer.perform(Self.flushSelector)
-        audioReceiver.flush()
-        audioDecoder?.flush()
+        _ = self.sampleBufferRenderer.perform(Self.flushSelector)
+        self.audioReceiver.flush()
+        self.audioDecoder?.flush()
 
         let decoder = self.decoder
-        feedQueue.async { [weak self] in
+        self.feedQueue.async { [weak self] in
             decoder.flush()
             guard let self else { return }
             DispatchQueue.main.async {
@@ -825,6 +942,7 @@ public final class NativePlayerEngine: PlayerEngine {
     }
 
     isolated deinit {
+        stop()
         seekTask?.cancel()
         seekTask = nil
         if let observer = timeObserver {

@@ -6,7 +6,7 @@ import Testing
 
 @testable import MetalPlayerCore
 
-@Suite("NativePlayerEngine Tests")
+@Suite("NativePlayerEngine Tests", .serialized)
 struct NativePlayerEngineTests {
     @Test("Engine initializes with expected defaults from configuration")
     @MainActor
@@ -132,5 +132,28 @@ struct NativePlayerEngineTests {
 
         engine.seekRelative(by: 1.0)
         #expect(engine.currentTime == 3.0)
+        engine.stop()
+    }
+
+    @Test("Engine handles unavailable network URL gracefully with loadError and not loading")
+    @MainActor
+    func testLoadAsyncNetworkError() async {
+        let engine = NativePlayerEngine()
+        // Invalid port / non-existent local server that will fail or reject instantly
+        await engine.loadAsync(path: "http://127.0.0.1:65534/nonexistent.mkv")
+
+        #expect(engine.isLoaded == false)
+        #expect(engine.isLoading == false)
+        #expect(engine.loadError != nil)
+    }
+
+    @Test("MediaDemuxer.isNetworkURL correctly detects schemes case-insensitively")
+    func testIsNetworkURL() {
+        #expect(MediaDemuxer.isNetworkURL("http://example.com/video.mp4") == true)
+        #expect(MediaDemuxer.isNetworkURL("HTTP://EXAMPLE.COM/VIDEO.MP4") == true)
+        #expect(MediaDemuxer.isNetworkURL("https://secure.stream.io/hls.m3u8") == true)
+        #expect(MediaDemuxer.isNetworkURL("Https://Secure.stream.io") == true)
+        #expect(MediaDemuxer.isNetworkURL("/Users/user/video.mkv") == false)
+        #expect(MediaDemuxer.isNetworkURL("file:///path/to/movie.mov") == false)
     }
 }

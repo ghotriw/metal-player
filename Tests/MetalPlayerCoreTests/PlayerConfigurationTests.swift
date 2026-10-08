@@ -62,4 +62,20 @@ struct PlayerConfigurationTests {
         engine.isToneMappingPermitted = true
         #expect(engine.activeRenderMode == .metalToneMap)
     }
+
+    @Test("CLI arguments correctly parse HTTP headers and network URL")
+    func testParseHTTPHeadersAndURL() {
+        let args = [
+            "MetalPlayer",
+            "--header=X-Api-Key: test-api-key-12345",
+            "--header",
+            "Authorization: Bearer token-xyz",
+            "https://stream.example.com/videos/123/stream.mkv",
+        ]
+        let (config, mediaPath) = PlayerConfiguration.parse(arguments: args)
+
+        #expect(mediaPath == "https://stream.example.com/videos/123/stream.mkv")
+        #expect(config.httpHeaders["X-Api-Key"] == "test-api-key-12345")
+        #expect(config.httpHeaders["Authorization"] == "Bearer token-xyz")
+    }
 }

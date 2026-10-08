@@ -97,6 +97,27 @@ public final class MediaDemuxer: @unchecked Sendable {
     private var masteringDisplay: Data?
     private var contentLightLevel: Data?
 
+    public final class InterruptContext: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _isCancelled = false
+
+        public init() {}
+
+        public var isCancelled: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return _isCancelled
+        }
+
+        public func cancel() {
+            lock.lock()
+            _isCancelled = true
+            lock.unlock()
+        }
+    }
+
+    private let interruptContext: InterruptContext
+    private let ownsInterruptContext: Bool
     private let lock = NSLock()
     private var isEOFInternal: Bool = false
     public var isEOF: Bool {
@@ -105,10 +126,81 @@ public final class MediaDemuxer: @unchecked Sendable {
         return isEOFInternal
     }
 
-    public init?(url: String) {
-        var ctx: UnsafeMutablePointer<AVFormatContext>? = nil
-        let ret = avformat_open_input(&ctx, url, nil, nil)
-        guard ret >= 0, let formatCtx = ctx else { return nil }
+    public static func isNetworkURL(_ path: String) -> Bool {
+        guard let url = URL(string: path), let scheme = url.scheme?.lowercased() else { return false }
+        return scheme == "http" || scheme == "https"
+    }
+
+    public convenience init?(url: String) {
+        self.init(url: url, headers: [:], interruptContext: nil)
+    }
+
+    public init?(
+        url: String,
+        headers: [String: String] = [:],
+        interruptContext: InterruptContext? = nil
+    ) {
+        let ctxContext = interruptContext ?? InterruptContext()
+        self.interruptContext = ctxContext
+        self.ownsInterruptContext = (interruptContext == nil)
+
+        var ctx: UnsafeMutablePointer<AVFormatContext>? = avformat_alloc_context()
+        guard let allocatedCtx = ctx else { return nil }
+
+        // Setup interrupt callback to abort hung network requests cleanly.
+        // `self.interruptContext` keeps a strong reference to `ctxContext` across the lifetime of MediaDemuxer.
+        allocatedCtx.pointee.interrupt_callback.opaque = Unmanaged.passUnretained(ctxContext).toOpaque()
+        allocatedCtx.pointee.interrupt_callback.callback = { opaque in
+            guard let opaque else { return 0 }
+            let unmanagedContext = Unmanaged<InterruptContext>.fromOpaque(opaque)
+            let instance = unmanagedContext.takeUnretainedValue()
+            return instance.isCancelled ? 1 : 0
+        }
+
+        var avOptions: OpaquePointer? = nil
+        defer {
+            if avOptions != nil {
+                av_dict_free(&avOptions)
+            }
+        }
+
+        let isNetworkURL = Self.isNetworkURL(url)
+        if isNetworkURL {
+            // Configure custom HTTP headers if present
+            if !headers.isEmpty {
+                var headerString = ""
+                for (key, value) in headers {
+                    // Sanitize against CRLF injection
+                    let cleanKey = key.replacingOccurrences(of: "\r", with: "").replacingOccurrences(of: "\n", with: "")
+                    let cleanVal = value.replacingOccurrences(of: "\r", with: "").replacingOccurrences(
+                        of: "\n", with: "")
+                    guard !cleanKey.isEmpty else { continue }
+
+                    if cleanKey.lowercased() == "user-agent" {
+                        _ = av_dict_set(&avOptions, "user_agent", cleanVal, 0)
+                    } else {
+                        headerString += "\(cleanKey): \(cleanVal)\r\n"
+                    }
+                }
+                if !headerString.isEmpty {
+                    _ = av_dict_set(&avOptions, "headers", headerString, 0)
+                }
+            }
+
+            // Network reconnect and timeout settings
+            _ = av_dict_set(&avOptions, "reconnect", "1", 0)
+            _ = av_dict_set(&avOptions, "reconnect_streamed", "1", 0)
+            _ = av_dict_set(&avOptions, "reconnect_delay_max", "5", 0)
+            // 10-second timeout in microseconds for network I/O
+            _ = av_dict_set(&avOptions, "rw_timeout", "10000000", 0)
+            _ = av_dict_set(&avOptions, "timeout", "10000000", 0)
+        }
+
+        let ret = avformat_open_input(&ctx, url, nil, &avOptions)
+        guard ret >= 0, let formatCtx = ctx else {
+            // Per FFmpeg avformat_open_input contract: user-allocated AVFormatContext is automatically freed on failure.
+            return nil
+        }
         self.formatCtx = formatCtx
 
         guard avformat_find_stream_info(formatCtx, nil) >= 0 else {
@@ -808,7 +900,14 @@ public final class MediaDemuxer: @unchecked Sendable {
         print("[MediaDemuxer] av_seek_frame to targetPts: \(target) (seconds: \(seconds)), ret: \(ret)")
     }
 
+    public func cancel() {
+        interruptContext.cancel()
+    }
+
     deinit {
+        if ownsInterruptContext {
+            interruptContext.cancel()
+        }
         lock.lock()
         defer { lock.unlock() }
         if formatCtx != nil {

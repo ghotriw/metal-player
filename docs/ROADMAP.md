@@ -107,16 +107,20 @@ flowchart TD
 
 ---
 
-### Stage 3: Remote Network & Media Server Streaming (HTTP / Emby)
-> Enable direct streaming from remote media servers (Emby, Jellyfin, Plex) without transcoding.
+### Stage 3: Remote Network & Stream Playback (HTTP/HTTPS) — [COMPLETED] ✅
+> Enable direct streaming from remote HTTP/HTTPS servers and media endpoints with custom authentication.
 
-- **3.1. Remote URLs & HTTP Headers Support:**
-  - Extend demuxer initialization: `MediaDemuxer.init(url: String, headers: [String: String])`.
-  - Pass custom HTTP request headers to FFmpeg (`AVDictionary` with `headers`, e.g., `X-Emby-Token`, `Authorization`, `User-Agent`).
-  - Support `http://`, `https://`, and `file://` protocols uniformly.
-- **3.2. Network Buffering & Backpressure:**
-  - Track playback buffer health and expose `isBuffering: Bool`.
-  - Implement FFmpeg interrupt callbacks (`AVFormatContext.interrupt_callback`) to prevent thread hangs during network dropouts or timeouts.
+- [x] **3.1. Remote URLs & HTTP Headers Support:**
+  - Extended demuxer initialization: `MediaDemuxer.init(url: String, headers: [String: String], interruptContext: InterruptContext?)`.
+  - Pass custom HTTP request headers to FFmpeg (`AVDictionary` with `"headers"` formatted CRLF, e.g., `Authorization`, `X-Api-Key`, `User-Agent`).
+  - Network options: automatic reconnect (`reconnect`, `reconnect_streamed`, `reconnect_delay_max`), 10s microsecond I/O timeouts (`timeout`, `rw_timeout`).
+  - Unified protocol support (`http://`, `https://`, and `file://`).
+- [x] **3.2. Network Buffering, Interruption & UI Integration:**
+  - Track playback loading state (`isLoading: Bool`) and errors (`loadError: String?`), displaying non-blocking spinner and error banner.
+  - Implement FFmpeg interrupt callbacks (`AVIOInterruptCB` via `InterruptContext`) to cleanly cancel/abort network connections on window close or playback stop without freezing UI or worker threads.
+  - Asynchronous background engine loading (`loadAsync(path:headers:)`).
+  - CLI argument parsing for `--header="Key: Value"` and `--header "Key: Value"` in `PlayerConfiguration`.
+  - Modern "Open URL…" modal sheet with preset headers (`Authorization`, `X-Api-Key`, `User-Agent`), menu shortcut `⌘U`, and quick-access button in `WelcomeView`.
 
 ---
 

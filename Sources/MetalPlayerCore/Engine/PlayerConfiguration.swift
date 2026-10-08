@@ -19,18 +19,23 @@ public struct PlayerConfiguration: Sendable, Equatable {
     /// Default volume level (0.0 ... 1.0).
     public var initialVolume: Float
 
+    /// Custom HTTP headers to pass when streaming over HTTP/HTTPS (e.g. for custom authentication tokens).
+    public var httpHeaders: [String: String]
+
     public init(
         enableToneMapping: Bool = true,
         defaultRenderMode: RenderMode = .auto,
         targetNits: Float = 203.0,
         sharpness: Float = 0.5,
-        initialVolume: Float = 1.0
+        initialVolume: Float = 1.0,
+        httpHeaders: [String: String] = [:]
     ) {
         self.enableToneMapping = enableToneMapping
         self.defaultRenderMode = defaultRenderMode
         self.targetNits = targetNits
         self.sharpness = sharpness
         self.initialVolume = initialVolume
+        self.httpHeaders = httpHeaders
     }
 
     public static let keyEnableToneMapping = "MetalPlayer.enableToneMapping"
@@ -97,6 +102,25 @@ public struct PlayerConfiguration: Sendable, Equatable {
             } else if arg.starts(with: "--volume=") {
                 if let val = Float(arg.dropFirst("--volume=".count)) {
                     config.initialVolume = max(0.0, min(1.0, val))
+                }
+            } else if arg.starts(with: "--header=") {
+                let headerStr = String(arg.dropFirst("--header=".count))
+                if let colonIdx = headerStr.firstIndex(of: ":") {
+                    let key = headerStr[..<colonIdx].trimmingCharacters(in: .whitespaces)
+                    let val = headerStr[headerStr.index(after: colonIdx)...].trimmingCharacters(in: .whitespaces)
+                    if !key.isEmpty {
+                        config.httpHeaders[key] = val
+                    }
+                }
+            } else if arg == "--header" && i + 1 < arguments.count {
+                i += 1
+                let headerStr = arguments[i]
+                if let colonIdx = headerStr.firstIndex(of: ":") {
+                    let key = headerStr[..<colonIdx].trimmingCharacters(in: .whitespaces)
+                    let val = headerStr[headerStr.index(after: colonIdx)...].trimmingCharacters(in: .whitespaces)
+                    if !key.isEmpty {
+                        config.httpHeaders[key] = val
+                    }
                 }
             } else if !arg.starts(with: "-") && mediaPath == nil {
                 mediaPath = arg

@@ -7,9 +7,14 @@ import UniformTypeIdentifiers
 @MainActor
 final class WelcomeWindowController: NSWindowController {
     private let onOpenURL: (URL) -> Void
+    private let onPromptOpenURL: (() -> Void)?
 
-    init(onOpenURL: @escaping (URL) -> Void) {
+    init(
+        onOpenURL: @escaping (URL) -> Void,
+        onPromptOpenURL: (() -> Void)? = nil
+    ) {
         self.onOpenURL = onOpenURL
+        self.onPromptOpenURL = onPromptOpenURL
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 520, height: 350),
@@ -44,6 +49,9 @@ final class WelcomeWindowController: NSWindowController {
         let welcomeView = WelcomeView(
             onOpenFile: { [weak self] in
                 self?.promptOpenFile()
+            },
+            onOpenURL: { [weak self] in
+                self?.onPromptOpenURL?()
             },
             onFileDropped: { [weak self] path in
                 self?.onOpenURL(URL(fileURLWithPath: path))

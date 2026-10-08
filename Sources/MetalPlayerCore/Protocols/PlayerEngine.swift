@@ -15,6 +15,8 @@ public protocol PlayerEngine: AnyObject, Sendable {
     @MainActor var duration: Double { get }
     @MainActor var isPlaying: Bool { get }
     @MainActor var isLoaded: Bool { get }
+    @MainActor var isLoading: Bool { get }
+    @MainActor var loadError: String? { get }
     @MainActor var mediaTitle: String { get }
     @MainActor var videoWidth: Int { get }
     @MainActor var videoHeight: Int { get }
@@ -36,6 +38,10 @@ public protocol PlayerEngine: AnyObject, Sendable {
     @MainActor var selectedAudioTrackId: Int { get }
 
     @MainActor func load(path: String)
+    @MainActor func load(path: String, headers: [String: String])
+    @MainActor func loadAsync(path: String) async
+    @MainActor func loadAsync(path: String, headers: [String: String]) async
+    @MainActor func stop()
     @MainActor func play()
     @MainActor func pause()
     @MainActor func togglePlayPause()
