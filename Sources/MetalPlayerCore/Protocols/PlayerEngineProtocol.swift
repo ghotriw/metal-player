@@ -10,7 +10,19 @@ public enum RenderMode: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 }
 
+public enum PlaybackState: Sendable, Equatable {
+    case idle
+    case loading
+    case playing
+    case paused
+    case completed
+    case failed(String)
+}
+
 public protocol PlayerEngineProtocol: AnyObject, Sendable {
+    @MainActor var playbackState: PlaybackState { get }
+    @MainActor var onTimeUpdate: ((_ currentTime: Double, _ duration: Double) -> Void)? { get set }
+    @MainActor var onPlaybackStateChanged: ((_ state: PlaybackState) -> Void)? { get set }
     @MainActor var currentTime: Double { get }
     @MainActor var duration: Double { get }
     @MainActor var isPlaying: Bool { get }

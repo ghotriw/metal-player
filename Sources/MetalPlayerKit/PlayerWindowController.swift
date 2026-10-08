@@ -10,6 +10,13 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
     public var onClose: (() -> Void)?
     public var onKeyStatusChanged: ((Bool) -> Void)?
 
+    /// Periodic time observer callback: (currentTime, duration)
+    public var onTimeUpdate: ((_ currentTime: Double, _ duration: Double) -> Void)?
+    /// Playback state change callback
+    public var onPlaybackStateChanged: ((PlaybackState) -> Void)?
+    /// Dedicated callback when video finishes playing to the end
+    public var onPlaybackEnded: (() -> Void)?
+
     public func applyConfiguration(_ config: PlayerConfiguration) {
         engine.applyConfiguration(config)
     }
@@ -64,6 +71,16 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
         let hostingView = NSHostingView(rootView: contentView)
         window.contentView = hostingView
         window.initialFirstResponder = hostingView
+
+        engine.onTimeUpdate = { [weak self] current, dur in
+            self?.onTimeUpdate?(current, dur)
+        }
+        engine.onPlaybackStateChanged = { [weak self] state in
+            self?.onPlaybackStateChanged?(state)
+            if state == .completed {
+                self?.onPlaybackEnded?()
+            }
+        }
     }
 
     required init?(coder: NSCoder) {

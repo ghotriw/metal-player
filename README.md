@@ -59,6 +59,23 @@ controller.openFile(
     url: fileURL,
     startTime: nil // Pass nil to automatically resume from saved position (if enabled)
 )
+
+// Observability and Event Callbacks:
+controller.onTimeUpdate = { currentTime, duration in
+    // Called periodically (every ~0.1s during active playback)
+}
+
+controller.onPlaybackStateChanged = { state in
+    // .idle, .loading, .playing, .paused, .completed, .failed(String)
+}
+
+controller.onPlaybackEnded = {
+    // Media finished playing to the end
+}
+
+controller.onClose = {
+    // Window was closed by user
+}
 ```
 
 ### Low-level Rendering Engine (`MetalPlayerCore`)

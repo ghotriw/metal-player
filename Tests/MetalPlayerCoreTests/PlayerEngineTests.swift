@@ -147,6 +147,67 @@ struct PlayerEngineTests {
         #expect(engine.loadError != nil)
     }
 
+    @Test("Engine notifies playbackState changes and time updates")
+    @MainActor
+    func testPlaybackStateTransitions() async {
+        let engine = PlayerEngine()
+        #expect(engine.playbackState == .idle)
+
+        var statesReceived: [PlaybackState] = []
+        engine.onPlaybackStateChanged = { state in
+            statesReceived.append(state)
+        }
+
+        // Test network error transition
+        await engine.loadAsync(path: "http://127.0.0.1:65534/nonexistent.mkv")
+        #expect(statesReceived.contains(.loading))
+        if case .failed = engine.playbackState {
+            // Success: state is failed
+        } else {
+            Issue.record("Expected playbackState to be .failed, but got \(engine.playbackState)")
+        }
+
+        // Stop resets to idle
+        engine.stop()
+        #expect(engine.playbackState == .idle)
+    }
+
+    @Test("Engine cancellation resets to idle instead of failed")
+    @MainActor
+    func testLoadCancellationResetsToIdle() async {
+        let engine = PlayerEngine()
+        let loadTask = Task { @MainActor in
+            await engine.loadAsync(path: "http://127.0.0.1:65534/slow.mkv")
+        }
+        // Cancel immediately
+        loadTask.cancel()
+        await loadTask.value
+
+        #expect(engine.playbackState == .idle)
+        #expect(engine.loadError == nil)
+    }
+
+    @Test("Engine play restarts from start when in completed state")
+    @MainActor
+    func testPlayRestartsWhenCompleted() {
+        let referencePath = "/Users/ghotriw/w_hdm_full.mkv"
+        guard FileManager.default.fileExists(atPath: referencePath) else {
+            return
+        }
+
+        let engine = PlayerEngine()
+        engine.load(path: referencePath)
+        #expect(engine.isLoaded == true)
+
+        engine.seek(to: 5.0)
+        #expect(engine.currentTime == 5.0)
+
+        engine.playbackState = .completed
+        engine.play()  // should seek to 0.0
+        #expect(engine.currentTime == 0.0)
+        engine.stop()
+    }
+
     @Test("MediaDemuxer.isNetworkURL correctly detects schemes case-insensitively")
     func testIsNetworkURL() {
         #expect(MediaDemuxer.isNetworkURL("http://example.com/video.mp4") == true)

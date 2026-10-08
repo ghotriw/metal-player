@@ -16,6 +16,19 @@ public final class PlayerEngine: PlayerEngineProtocol {
     public var isLoaded: Bool = false
     public var isLoading: Bool = false
     public var loadError: String? = nil
+    public var playbackState: PlaybackState = .idle {
+        didSet {
+            if oldValue != playbackState {
+                onPlaybackStateChanged?(playbackState)
+            }
+        }
+    }
+
+    /// Periodic time observer callback for external clients (e.g. Coordinator / Bridge)
+    public var onTimeUpdate: ((_ currentTime: Double, _ duration: Double) -> Void)?
+    /// State change callback for external clients
+    public var onPlaybackStateChanged: ((_ state: PlaybackState) -> Void)?
+
     private var loadingTask: Task<Void, Never>?
     private var currentInterruptContext: MediaDemuxer.InterruptContext?
     private var currentLoadID = UUID()
@@ -208,6 +221,13 @@ public final class PlayerEngine: PlayerEngineProtocol {
             if !seconds.isNaN && !seconds.isInfinite && seconds >= 0 {
                 MainActor.assumeIsolated {
                     self.currentTime = seconds
+                    self.onTimeUpdate?(seconds, self.duration)
+                    // Check if playback reached the end
+                    if self.isPlaying && self.duration > 0 && seconds >= (self.duration - 0.25) {
+                        self.stopPlaybackPipeline()
+                        self.playbackState = .completed
+                        self.saveCurrentPlaybackProgress()
+                    }
                     // Throttled periodic progress auto-save every 15 seconds
                     if abs(seconds - self.lastSavedProgressSeconds) >= 15.0 {
                         self.lastSavedProgressSeconds = seconds
@@ -478,6 +498,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         isLoaded = false
         isLoading = true
         loadError = nil
+        playbackState = .loading
 
         let task = Task.detached(priority: .userInitiated) { () -> MediaDemuxer? in
             guard !Task.isCancelled, !interruptContext.isCancelled else { return nil }
@@ -487,15 +508,21 @@ public final class PlayerEngine: PlayerEngineProtocol {
         let newDemuxer = await task.value
 
         // Prevent race condition: if another load started or task was cancelled, discard result
-        guard self.currentLoadID == loadID, !Task.isCancelled, !interruptContext.isCancelled else {
+        if self.currentLoadID != loadID || Task.isCancelled || interruptContext.isCancelled {
             print("[PlayerEngine] Loading was superseded or cancelled for:", path)
+            if self.currentLoadID == loadID {
+                self.isLoading = false
+                self.playbackState = .idle
+            }
             return
         }
 
         guard let demuxer = newDemuxer else {
             print("[PlayerEngine] Failed to open file or network stream:", path)
             self.isLoading = false
-            self.loadError = "Failed to open stream or media file."
+            let err = "Failed to open stream or media file."
+            self.loadError = err
+            self.playbackState = .failed(err)
             return
         }
 
@@ -527,10 +554,13 @@ public final class PlayerEngine: PlayerEngineProtocol {
         isLoaded = false
         isLoading = false
         loadError = nil
+        playbackState = .loading
 
         guard let demuxer = MediaDemuxer(url: path, headers: headers) else {
             print("[PlayerEngine] Failed to open file:", path)
-            self.loadError = "Failed to open media file."
+            let err = "Failed to open media file."
+            self.loadError = err
+            self.playbackState = .failed(err)
             return
         }
 
@@ -546,6 +576,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         demuxer?.cancel()
         demuxer = nil
         pause()
+        playbackState = .idle
     }
 
     public func saveCurrentPlaybackProgress() {
@@ -701,6 +732,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 self.synchronizer.setRate(1.0, time: targetCMTime)
                 self.displayLink?.isPaused = false
                 self.isPlaying = true
+                self.playbackState = .playing
                 self.performanceMonitor.handlePlaybackStateChange(isPlaying: true)
             }
         }
@@ -883,6 +915,12 @@ public final class PlayerEngine: PlayerEngineProtocol {
 
     public func play() {
         guard isLoaded else { return }
+
+        // If video reached the end or is in completed state, restart from the beginning
+        if playbackState == .completed || (duration > 0 && currentTime >= (duration - 0.25)) {
+            seek(to: 0.0)
+        }
+
         let feedingActive = isFeeding.withLock { $0 }
         if !feedingActive {
             startFeeding()
@@ -890,10 +928,18 @@ public final class PlayerEngine: PlayerEngineProtocol {
         synchronizer.setRate(1.0, time: synchronizer.currentTime())
         displayLink?.isPaused = false
         isPlaying = true
+        playbackState = .playing
         performanceMonitor.handlePlaybackStateChange(isPlaying: true)
     }
 
     public func pause() {
+        stopPlaybackPipeline()
+        playbackState = .paused
+        saveCurrentPlaybackProgress()
+    }
+
+    /// Stops audio/video feeding and halts the clock without altering playbackState or saving progress.
+    private func stopPlaybackPipeline() {
         synchronizer.setRate(0.0, time: synchronizer.currentTime())
         displayLink?.isPaused = true
         isFeeding.withLock { $0 = false }
@@ -903,7 +949,6 @@ public final class PlayerEngine: PlayerEngineProtocol {
         seekTask = nil
         isPlaying = false
         performanceMonitor.handlePlaybackStateChange(isPlaying: false)
-        saveCurrentPlaybackProgress()
     }
 
     public func togglePlayPause() {
@@ -946,6 +991,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
                     self.synchronizer.setRate(1.0, time: targetTime)
                     self.displayLink?.isPaused = false
                     self.isPlaying = true
+                    self.playbackState = .playing
                 }
             } else {
                 Self.seekPreview(
