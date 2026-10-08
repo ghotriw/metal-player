@@ -1,0 +1,79 @@
+import AppKit
+import MetalPlayerCore
+import MetalPlayerUI
+
+@MainActor
+final class PlayerWindow: NSWindow {
+    weak var actionHandler: (any PlayerActions)?
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, handleHardwareKey(event) {
+            return
+        }
+        super.sendEvent(event)
+    }
+
+    private func handleHardwareKey(_ event: NSEvent) -> Bool {
+        // Do not intercept if user is typing in a text field
+        if firstResponder is NSTextView || firstResponder is NSText {
+            return false
+        }
+
+        guard let actionHandler else { return false }
+
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option])
+
+        // Option-modified shortcuts (e.g. frame stepping)
+        if modifiers == [.option] {
+            switch event.keyCode {
+            case 0x7C:  // Option + Right Arrow
+                actionHandler.stepFrameForward()
+                return true
+            case 0x7B:  // Option + Left Arrow
+                actionHandler.stepFrameBackward()
+                return true
+            default:
+                return false
+            }
+        }
+
+        // If Command or Control are pressed, leave them to system/menu commands
+        guard modifiers.isEmpty else { return false }
+
+        // Unmodified shortcuts based on hardware keyCode (layout-independent)
+        switch event.keyCode {
+        case 0x31:  // Space
+            actionHandler.togglePlayPause()
+            return true
+        case 0x7B:  // Left Arrow
+            actionHandler.seekRelative(by: -5.0)
+            return true
+        case 0x7C:  // Right Arrow
+            actionHandler.seekRelative(by: 5.0)
+            return true
+        case 0x7E:  // Up Arrow
+            actionHandler.stepVolume(by: 0.05)
+            return true
+        case 0x7D:  // Down Arrow
+            actionHandler.stepVolume(by: -0.05)
+            return true
+        case 0x2E:  // Physical 'M' (ANSI M) -> Mute on any keyboard layout (Russian, Hebrew, etc.)
+            actionHandler.toggleMute()
+            return true
+        case 0x02:  // Physical 'D' (ANSI D) -> Performance HUD on any layout
+            actionHandler.toggleDebugHUD()
+            return true
+        case 0x03:  // Physical 'F' (ANSI F) -> Toggle Fullscreen on any layout
+            actionHandler.toggleFullscreen()
+            return true
+        case 0x35:  // Escape -> Exit Fullscreen if active
+            if styleMask.contains(.fullScreen) {
+                actionHandler.exitFullscreen()
+                return true
+            }
+            return false
+        default:
+            return false
+        }
+    }
+}

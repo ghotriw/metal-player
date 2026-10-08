@@ -5,7 +5,6 @@ import SwiftUI
 public struct ContentView: View {
     public let engine: NativePlayerEngine
     public var uiState: PlayerUIState
-    public let actions: any PlayerActions
     public var onFileLoaded: ((URL) -> Void)?
     public var onControlsVisibilityChanged: ((Bool) -> Void)?
 
@@ -17,13 +16,11 @@ public struct ContentView: View {
     public init(
         engine: NativePlayerEngine,
         uiState: PlayerUIState = PlayerUIState(),
-        actions: any PlayerActions,
         onFileLoaded: ((URL) -> Void)? = nil,
         onControlsVisibilityChanged: ((Bool) -> Void)? = nil
     ) {
         self.engine = engine
         self.uiState = uiState
-        self.actions = actions
         self.onFileLoaded = onFileLoaded
         self.onControlsVisibilityChanged = onControlsVisibilityChanged
     }
@@ -103,9 +100,6 @@ public struct ContentView: View {
         .onAppear {
             onControlsVisibilityChanged?(isControlsVisible)
         }
-        // Scene and focus actions for application menu shortcuts
-        .focusedSceneValue(\.playerActions, actions)
-        .focusedValue(\.playerActions, actions)
     }
 
     private func showControlsTemporarily() {
