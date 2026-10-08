@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -e
+
+SWIFT_FORMAT_BIN="$(xcrun --find swift-format 2>/dev/null || which swift-format 2>/dev/null || true)"
+
+if [[ -z "$SWIFT_FORMAT_BIN" ]]; then
+    echo "Warning: swift-format not found, skipping pre-commit formatting."
+    exit 0
+fi
+
+# Get staged Swift files that were added, copied, or modified
+CONFIG_ARGS=()
+if [[ -f ".swift-format" ]]; then
+    CONFIG_ARGS=(--configuration ".swift-format")
+fi
+
+# Process staged files line by line to handle potential spaces in filenames
+git diff --cached --name-only --diff-filter=ACM | grep '\.swift$' | while IFS= read -r file; do
+    if [[ -f "$file" ]]; then
+        echo "🎨 Formatting $file..."
+        "$SWIFT_FORMAT_BIN" format --in-place "${CONFIG_ARGS[@]}" "$file"
+        git add "$file"
+    fi
+done
