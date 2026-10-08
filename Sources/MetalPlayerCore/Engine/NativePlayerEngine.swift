@@ -608,8 +608,9 @@ public final class NativePlayerEngine: PlayerEngine {
                 let signpostID = PlayerPerformanceMonitor.shared.signposter.makeSignpostID()
                 let interval = PlayerPerformanceMonitor.shared.signposter.beginInterval(
                     "EnqueueNativeSample", id: signpostID)
+                let isPreroll = isPrerollSample(sample)
                 let readySample = CMReadySampleBuffer(unsafeBuffer: sample)
-                if isPrerollSample(sample) {
+                if isPreroll {
                     _ = receiver.enqueueImmediately(readySample)
                 } else {
                     _ = try? await receiver.enqueue(readySample)
@@ -654,24 +655,18 @@ public final class NativePlayerEngine: PlayerEngine {
                 try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
                 continue
             }
-            let pcmBuffers = audioDecoder.decode(
+            var pcmBuffers = audioDecoder.decode(
                 packetData: packet.data,
                 pts: packet.pts,
                 timebase: audioTimebase
             )
-            for buf in pcmBuffers {
+            while !pcmBuffers.isEmpty {
                 if Task.isCancelled || !feedingLock.withLock({ $0 }) { break }
-                await enqueueAudioSample(buf, to: receiver)
+                let buf = pcmBuffers.removeFirst()
+                let ready: CMReadySampleBuffer<CMSampleBuffer.DynamicContent> = CMReadySampleBuffer(unsafeBuffer: buf)
+                _ = try? await receiver.enqueue(ready)
             }
         }
-    }
-
-    private nonisolated static func enqueueAudioSample(
-        _ sample: CMSampleBuffer,
-        to receiver: AVSampleBufferAudioRenderer.Receiver
-    ) async {
-        let ready: CMReadySampleBuffer<CMSampleBuffer.DynamicContent> = CMReadySampleBuffer(unsafeBuffer: sample)
-        _ = try? await receiver.enqueue(ready)
     }
 
     public func selectAudioTrack(id: Int) {

@@ -121,11 +121,11 @@ public final class NativeVideoHostView: NSView {
         metalLayer.drawableSize = CGSize(width: targetFrame.width * scale, height: targetFrame.height * scale)
     }
 
-    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+    public override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         return .copy
     }
 
-    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+    public override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
         guard let items = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL],
             let firstUrl = items.first
         else {

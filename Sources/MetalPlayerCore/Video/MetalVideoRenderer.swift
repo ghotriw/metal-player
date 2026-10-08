@@ -56,9 +56,9 @@ public struct ToneMapUniforms: Sendable {
 
 public final class MetalVideoRenderer: @unchecked Sendable {
     public let metalLayer = CAMetalLayer()
-    private let device: MTLDevice
-    private let commandQueue: MTLCommandQueue
-    private var pipelineState: MTLRenderPipelineState?
+    private let device: any MTLDevice
+    private let commandQueue: any MTLCommandQueue
+    private var pipelineState: (any MTLRenderPipelineState)?
     private var textureCache: CVMetalTextureCache?
     private let renderLock = OSAllocatedUnfairLock()
     private let uniformsLock = OSAllocatedUnfairLock(initialState: ToneMapUniforms())
