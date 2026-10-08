@@ -72,19 +72,28 @@ To support embedding into host applications with web-driven frontends (e.g., `WK
 
 ## 3. Video Pipeline Invariants (DO NOT BREAK)
 
-### 3.1. Display-Adaptive Rendering & Graceful Handover
+### 3.1. Display-Adaptive Rendering & Native HDR Presentation
 - The default player mode is `.auto` (`Auto (Display Adaptive)`).
 - EDR capabilities are queried dynamically across display changes:
   ```swift
   let isHDR = (screen.maximumExtendedDynamicRangeColorComponentValue) > 1.01
   ```
-- **Graceful Handover Mechanics:**
-  - **HDR ➔ SDR Transition:** The underlying hardware `AVSampleBufferDisplayLayer` must remain continuously visible until the background `VTVideoDecoder` produces its first valid frame matching or exceeding `currentSyncTime`. Only then does `CAMetalLayer` surface over the display layer (`isMetalLayerVisible = true`). This prevents black flickers or frame pauses.
-  - **SDR ➔ HDR Transition:** `isMetalLayerVisible` is immediately reset to `false`, revealing the native system HDR overlay with zero latency.
-  - **Pipeline Queue Hygiene:** On every render mode handover, `frameQueue.clear()` and asynchronous `decoder.flush()` must be executed to flush stale frames and prevent stutter or packet queue desynchronization.
-  - **Deliberate Idle Decoder Energy Efficiency (Design Choice):**
-    - While on an HDR display, `VTVideoDecoder` must **not** decode idle frames (`modeLock == .metalToneMap`). This guarantees zero redundant CPU/Media Engine power consumption and maximizes battery life on laptops.
-    - As a direct design trade-off, transitioning live playback from HDR to SDR will experience a brief 1–2 second latency before the Metal tone-mapped layer surfaces, during which `AVSampleBufferDisplayLayer` seamlessly continues rendering underneath. **This is an intentional design decision:** a brief 1–2s tone-mapping catch-up during the rare window-move event is strictly preferred over 2 hours of redundant dual decoding during full playback. Never revert this to continuous parallel decoding.
+- **Unified Video Decoding Pipeline:**
+  - All video packets are routed through `VTVideoDecoder` to output uncompressed `CVPixelBuffer` frames into `FrameQueue`.
+  - The render mode determines how the decoded `CVPixelBuffer` is presented:
+    - **`.metalToneMap` (SDR Displays):** Frame is rendered via `MetalVideoRenderer` into `CAMetalLayer` with BT.2390 tone curve.
+    - **`.system` (Native Liquid Retina XDR / HDR Displays):** Frame is wrapped in a `CMSampleBuffer` with `kCMSampleAttachmentKey_DisplayImmediately = true` and enqueued directly to `AVSampleBufferDisplayLayer`.
+- **DisplayLayer & Timebase Isolation (XDR Fullscreen Deadlock Prevention):**
+  - **CRITICAL INVARIANT:** Under no circumstances should raw compressed NALU packets be enqueued into an `AVSampleBufferDisplayLayer` attached to `AVSampleBufferRenderSynchronizer` for HDR playback. On Apple Silicon Liquid Retina XDR displays in fullscreen mode, enqueuing compressed packets with synchronizer timebase activates hardware Direct Scanout (`IOMFBDisplay` / `IOFenceTransaction`). Seeking backward breaks PTS fences and causes a kernel/WindowServer deadlock (display freeze).
+  - To prevent this deadlock:
+    1. `AVSampleBufferDisplayLayer` is completely decoupled from `AVSampleBufferRenderSynchronizer`.
+    2. The display layer's `controlTimebase` is assigned to the host clock: `CMTimebaseCreateWithMasterClock(..., CMClockGetHostTimeClock(), ...)`.
+    3. Frames are enqueued as uncompressed `CVPixelBuffer` buffers wrapped with `kCMSampleAttachmentKey_DisplayImmediately = true`.
+    4. Frame delivery is paced by the `CADisplayLink` loop aligned to the synchronizer's audio/master clock time (`synchronizer.currentTime()`).
+- **Seamless Render Mode Switching:**
+  - Switching between `.metalToneMap` and `.system` toggles layer visibility (`isMetalLayerVisible`) and clears the display layer (`displayLayer.flush()`).
+  - Because all frames are decoded continuously into `FrameQueue`, handover between Metal and Native HDR occurs with zero latency and zero frame stalling.
+- **Pipeline Queue Hygiene:** On seek or render mode handover, `frameQueue.clear()`, `decoder.flush()`, and `displayLayer.flush()` must be executed to flush stale frames and prevent stutter or packet queue desynchronization.
 
 ### 3.2. Metal Tone-Mapping Color Engine (`HDRToneMapping.metal`)
 - **Input Format:** 10-bit P010 biplanar YCbCr (`r16Unorm` Y plane, `rg16Unorm` CbCr plane). Normalization must account for VideoToolbox MSB-alignment: `val * 65535.0 / 1023.0`.
