@@ -3,10 +3,10 @@ import MetalPlayerCore
 import SwiftUI
 
 public struct VideoSurfaceView: NSViewRepresentable {
-    public let engine: NativePlayerEngine
+    public let engine: PlayerEngine
     public let onFileDrop: (String) -> Void
 
-    public init(engine: NativePlayerEngine, onFileDrop: @escaping (String) -> Void) {
+    public init(engine: PlayerEngine, onFileDrop: @escaping (String) -> Void) {
         self.engine = engine
         self.onFileDrop = onFileDrop
     }

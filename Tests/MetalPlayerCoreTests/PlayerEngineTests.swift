@@ -6,8 +6,8 @@ import Testing
 
 @testable import MetalPlayerCore
 
-@Suite("NativePlayerEngine Tests", .serialized)
-struct NativePlayerEngineTests {
+@Suite("PlayerEngine Tests", .serialized)
+struct PlayerEngineTests {
     @Test("Engine initializes with expected defaults from configuration")
     @MainActor
     func testEngineInitializationDefaults() {
@@ -18,7 +18,7 @@ struct NativePlayerEngineTests {
             sharpness: 0.7,
             initialVolume: 0.8
         )
-        let engine = NativePlayerEngine(configuration: config)
+        let engine = PlayerEngine(configuration: config)
 
         #expect(engine.isLoaded == false)
         #expect(engine.isPlaying == false)
@@ -36,7 +36,7 @@ struct NativePlayerEngineTests {
     @Test("Active render mode dynamically computes based on display HDR and permission")
     @MainActor
     func testRenderModeResolution() {
-        let engine = NativePlayerEngine()
+        let engine = PlayerEngine()
 
         // Default: isHDRDisplay = true, auto -> .system
         engine.isHDRDisplay = true
@@ -68,7 +68,7 @@ struct NativePlayerEngineTests {
     @Test("Volume and mute updates properly reflect on engine state")
     @MainActor
     func testVolumeAndMute() {
-        let engine = NativePlayerEngine()
+        let engine = PlayerEngine()
 
         engine.volume = 0.65
         #expect(engine.volume == 0.65)
@@ -84,7 +84,7 @@ struct NativePlayerEngineTests {
     @Test("Playback toggle and seek commands update internal state")
     @MainActor
     func testPlaybackControls() {
-        let engine = NativePlayerEngine()
+        let engine = PlayerEngine()
 
         // Toggle when unloaded does not play
         engine.togglePlayPause()
@@ -109,7 +109,7 @@ struct NativePlayerEngineTests {
             return
         }
 
-        let engine = NativePlayerEngine()
+        let engine = PlayerEngine()
         engine.load(path: referencePath)
 
         #expect(engine.isLoaded == true)
@@ -138,7 +138,7 @@ struct NativePlayerEngineTests {
     @Test("Engine handles unavailable network URL gracefully with loadError and not loading")
     @MainActor
     func testLoadAsyncNetworkError() async {
-        let engine = NativePlayerEngine()
+        let engine = PlayerEngine()
         // Invalid port / non-existent local server that will fail or reject instantly
         await engine.loadAsync(path: "http://127.0.0.1:65534/nonexistent.mkv")
 

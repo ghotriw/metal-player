@@ -3,10 +3,10 @@ import AppKit
 
 public final class NativeVideoHostView: NSView {
     public var onFileDrop: ((String) -> Void)?
-    private let engine: NativePlayerEngine
+    private let engine: PlayerEngine
     private let rootLayer = CALayer()
 
-    public init(engine: NativePlayerEngine) {
+    public init(engine: PlayerEngine) {
         self.engine = engine
         super.init(frame: .zero)
         setup()

@@ -4,9 +4,9 @@ import SwiftUI
 /// An unobtrusive real-time telemetry HUD for audio/video playback and rendering diagnostics.
 /// Shows CPU, RAM, render FPS, render time per frame, and buffer queue levels.
 public struct PerformanceHUDView: View {
-    let engine: NativePlayerEngine
+    let engine: PlayerEngine
 
-    public init(engine: NativePlayerEngine) {
+    public init(engine: PlayerEngine) {
         self.engine = engine
     }
 

@@ -5,7 +5,7 @@ import SwiftUI
 
 @MainActor
 public final class PlayerWindowController: NSWindowController, NSWindowDelegate {
-    public let engine: NativePlayerEngine
+    public let engine: PlayerEngine
     public let uiState = PlayerUIState()
     public var onClose: (() -> Void)?
     public var onKeyStatusChanged: ((Bool) -> Void)?
@@ -21,7 +21,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
     }
 
     public init(configuration: PlayerConfiguration = PlayerConfiguration()) {
-        self.engine = NativePlayerEngine(configuration: configuration)
+        self.engine = PlayerEngine(configuration: configuration)
         let window = PlayerWindow(
             contentRect: NSRect(x: 100, y: 100, width: 960, height: 540),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],

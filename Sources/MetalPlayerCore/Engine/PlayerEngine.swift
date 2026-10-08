@@ -9,7 +9,7 @@ import os
 
 @Observable
 @MainActor
-public final class NativePlayerEngine: PlayerEngine {
+public final class PlayerEngine: PlayerEngineProtocol {
     public var currentTime: Double = 0
     public var duration: Double = 0
     public var isPlaying: Bool = false
@@ -145,9 +145,9 @@ public final class NativePlayerEngine: PlayerEngine {
     private var displayLinkTarget: DisplayLinkTarget?
 
     private final class DisplayLinkTarget: NSObject, @unchecked Sendable {
-        private weak var engine: NativePlayerEngine?
+        private weak var engine: PlayerEngine?
 
-        init(engine: NativePlayerEngine) {
+        init(engine: PlayerEngine) {
             self.engine = engine
             super.init()
         }
@@ -227,7 +227,7 @@ public final class NativePlayerEngine: PlayerEngine {
     private func handleAudioConfigurationChange() {
         guard isPlaying else { return }
         print(
-            "[NativePlayerEngine] Audio configuration changed (Spatial Audio toggle or route change)"
+            "[PlayerEngine] Audio configuration changed (Spatial Audio toggle or route change)"
         )
         audioReceiver.flush()
         audioDecoder?.flush()
@@ -452,7 +452,7 @@ public final class NativePlayerEngine: PlayerEngine {
 
     public func loadAsync(path: String, headers: [String: String], startTime: Double?) async {
         print(
-            "[NativePlayerEngine] Loading async:", path, "with headers count:", headers.count, "startTime:",
+            "[PlayerEngine] Loading async:", path, "with headers count:", headers.count, "startTime:",
             String(describing: startTime))
 
         // Save progress for previously active media if present
@@ -488,12 +488,12 @@ public final class NativePlayerEngine: PlayerEngine {
 
         // Prevent race condition: if another load started or task was cancelled, discard result
         guard self.currentLoadID == loadID, !Task.isCancelled, !interruptContext.isCancelled else {
-            print("[NativePlayerEngine] Loading was superseded or cancelled for:", path)
+            print("[PlayerEngine] Loading was superseded or cancelled for:", path)
             return
         }
 
         guard let demuxer = newDemuxer else {
-            print("[NativePlayerEngine] Failed to open file or network stream:", path)
+            print("[PlayerEngine] Failed to open file or network stream:", path)
             self.isLoading = false
             self.loadError = "Failed to open stream or media file."
             return
@@ -503,7 +503,7 @@ public final class NativePlayerEngine: PlayerEngine {
     }
 
     private func loadSync(path: String, headers: [String: String], startTime: Double?) {
-        print("[NativePlayerEngine] Loading sync:", path, "startTime:", String(describing: startTime))
+        print("[PlayerEngine] Loading sync:", path, "startTime:", String(describing: startTime))
 
         // Save progress for previously active media if present
         saveCurrentPlaybackProgress()
@@ -529,7 +529,7 @@ public final class NativePlayerEngine: PlayerEngine {
         loadError = nil
 
         guard let demuxer = MediaDemuxer(url: path, headers: headers) else {
-            print("[NativePlayerEngine] Failed to open file:", path)
+            print("[PlayerEngine] Failed to open file:", path)
             self.loadError = "Failed to open media file."
             return
         }
@@ -644,7 +644,7 @@ public final class NativePlayerEngine: PlayerEngine {
         )
 
         print(
-            "[NativePlayerEngine] Loaded successfully. Duration: \(self.duration)s, peakNits: \(demuxer.maxPeakNits), formatDesc: \(String(describing: demuxer.formatDescription))"
+            "[PlayerEngine] Loaded successfully. Duration: \(self.duration)s, peakNits: \(demuxer.maxPeakNits), formatDesc: \(String(describing: demuxer.formatDescription))"
         )
 
         // Initialize audio decoder if audio stream is present
@@ -653,11 +653,11 @@ public final class NativePlayerEngine: PlayerEngine {
             self.audioDecoder = decoder
             self.audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
             print(
-                "[NativePlayerEngine] Audio decoder initialized: \(String(describing: self.audioDecoder != nil)), channels: \(demuxer.audioChannels), rate: \(demuxer.audioSampleRate)"
+                "[PlayerEngine] Audio decoder initialized: \(String(describing: self.audioDecoder != nil)), channels: \(demuxer.audioChannels), rate: \(demuxer.audioSampleRate)"
             )
         } else {
             self.audioDecoder = nil
-            print("[NativePlayerEngine] No audio track found or failed to get codec parameters")
+            print("[PlayerEngine] No audio track found or failed to get codec parameters")
         }
 
         _ = self.sampleBufferRenderer.perform(Self.flushSelector)
@@ -671,7 +671,7 @@ public final class NativePlayerEngine: PlayerEngine {
         let effectiveStartTime: Double
         if let explicit = requestedStartTime, explicit > 0 {
             effectiveStartTime = min(explicit, max(0.0, self.duration - 1.0))
-            print("[NativePlayerEngine] Using explicit start time: \(effectiveStartTime)s (ignoring history)")
+            print("[PlayerEngine] Using explicit start time: \(effectiveStartTime)s (ignoring history)")
         } else if configuration.resumePlayback,
             let saved = historyStore.savedPosition(
                 for: path,
@@ -680,7 +680,7 @@ public final class NativePlayerEngine: PlayerEngine {
             )
         {
             effectiveStartTime = min(saved, max(0.0, self.duration - 1.0))
-            print("[NativePlayerEngine] Resuming playback from saved history: \(effectiveStartTime)s")
+            print("[PlayerEngine] Resuming playback from saved history: \(effectiveStartTime)s")
         } else {
             effectiveStartTime = 0.0
         }
@@ -781,7 +781,7 @@ public final class NativePlayerEngine: PlayerEngine {
 
             guard let sample = demuxer.nextVideoSample() else {
                 if demuxer.isEOF {
-                    print("[NativePlayerEngine] Demuxer reached EOF for video.")
+                    print("[PlayerEngine] Demuxer reached EOF for video.")
                     break
                 }
                 try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
@@ -795,7 +795,7 @@ public final class NativePlayerEngine: PlayerEngine {
             if count <= 5 || count % 200 == 0 {
                 let pts = CMSampleBufferGetPresentationTimeStamp(sample)
                 print(
-                    "[NativePlayerEngine] Decoding video sample #\(count), pts: \(CMTimeGetSeconds(pts))s, queueCount: \(queue.count)"
+                    "[PlayerEngine] Decoding video sample #\(count), pts: \(CMTimeGetSeconds(pts))s, queueCount: \(queue.count)"
                 )
             }
 
@@ -857,7 +857,7 @@ public final class NativePlayerEngine: PlayerEngine {
 
     public func selectAudioTrack(id: Int) {
         guard let demuxer = self.demuxer else { return }
-        print("[NativePlayerEngine] Switching to audio track: \(id)")
+        print("[PlayerEngine] Switching to audio track: \(id)")
         let wasPlaying = isPlaying
         pause()
 
@@ -915,7 +915,7 @@ public final class NativePlayerEngine: PlayerEngine {
     }
 
     public func seek(to seconds: Double) {
-        print("[NativePlayerEngine] Seeking to seconds:", seconds)
+        print("[PlayerEngine] Seeking to seconds:", seconds)
         guard let demuxer = self.demuxer else { return }
         let wasPlaying = isPlaying
         pause()
@@ -961,7 +961,7 @@ public final class NativePlayerEngine: PlayerEngine {
                 }
             }
         }
-        print("[NativePlayerEngine] Seek initiated asynchronously to:", targetTime.seconds)
+        print("[PlayerEngine] Seek initiated asynchronously to:", targetTime.seconds)
     }
 
     private nonisolated static func seekPreview(

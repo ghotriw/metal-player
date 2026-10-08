@@ -3,7 +3,7 @@ import MetalPlayerCore
 import SwiftUI
 
 public struct ControlsOverlay: View {
-    @Bindable var engine: NativePlayerEngine
+    @Bindable var engine: PlayerEngine
     @Binding var isInteracting: Bool
     var isFullscreen: Bool = false
     var onOpenFile: () -> Void

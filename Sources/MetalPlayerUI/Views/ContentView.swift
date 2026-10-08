@@ -3,7 +3,7 @@ import MetalPlayerCore
 import SwiftUI
 
 public struct ContentView: View {
-    public let engine: NativePlayerEngine
+    public let engine: PlayerEngine
     public var uiState: PlayerUIState
     public var onFileLoaded: ((URL) -> Void)?
     public var onControlsVisibilityChanged: ((Bool) -> Void)?
@@ -15,7 +15,7 @@ public struct ContentView: View {
     @FocusState private var isFocused: Bool
 
     public init(
-        engine: NativePlayerEngine,
+        engine: PlayerEngine,
         uiState: PlayerUIState = PlayerUIState(),
         onFileLoaded: ((URL) -> Void)? = nil,
         onControlsVisibilityChanged: ((Bool) -> Void)? = nil,

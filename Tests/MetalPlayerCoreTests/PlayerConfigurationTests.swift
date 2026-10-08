@@ -48,7 +48,7 @@ struct PlayerConfigurationTests {
     @MainActor
     func testEngineToneMappingDisabled() {
         let config = PlayerConfiguration(enableToneMapping: false, defaultRenderMode: .auto)
-        let engine = NativePlayerEngine(configuration: config)
+        let engine = PlayerEngine(configuration: config)
 
         engine.isHDRDisplay = false  // Normally triggers .metalToneMap in auto mode
         #expect(engine.isToneMappingPermitted == false)

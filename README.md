@@ -66,7 +66,7 @@ controller.openFile(
 ```swift
 import MetalPlayerCore
 
-let engine = NativePlayerEngine()
+let engine = PlayerEngine()
 
 // Async loading for network streams:
 await engine.loadAsync(

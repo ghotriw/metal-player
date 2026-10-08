@@ -10,7 +10,7 @@ public enum RenderMode: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 }
 
-public protocol PlayerEngine: AnyObject, Sendable {
+public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor var currentTime: Double { get }
     @MainActor var duration: Double { get }
     @MainActor var isPlaying: Bool { get }
