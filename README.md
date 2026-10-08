@@ -2,8 +2,8 @@
 
 A video player for macOS built on VideoToolbox, AVSampleBufferDisplayLayer, and Metal.
 
-> [!WARNING]
-> **Status: pre-alpha.** Not ready for everyday use. Subtitles and standalone packaging are not implemented yet.
+> [!NOTE]
+> **Status: alpha.** Core playback, HDR tone mapping, audio pipeline, and text subtitles (SRT, WebVTT, embedded SubRip) are implemented.
 
 ## Roadmap
 
@@ -14,9 +14,10 @@ A video player for macOS built on VideoToolbox, AVSampleBufferDisplayLayer, and 
 - [x] Desktop UX: keyboard shortcuts, double-click fullscreen, cursor auto-hide
 - [x] HTTP/HTTPS streaming with custom auth headers
 - [x] Resume playback & start time position control (Watch Later)
+- [x] Subtitles: embedded SubRip/MKV/MP4 & external SRT/WebVTT with styling & alignment
+- [ ] Subtitles: advanced stylized ASS/SSA typesetting (`libass`) & bitmap formats (PGS/VOBSUB)
 - [ ] Dolby Vision Profile 8/8.1 RPU processing (per-frame L1 metadata)
 - [ ] AV1 (VideoToolbox on M3 and later, `dav1d` on M1/M2)
-- [ ] Subtitles: embedded and external SRT, WebVTT, ASS
 - [ ] Embedding the video view in a WKWebView-based client
 - [ ] Bundling FFmpeg dylibs into the app
 

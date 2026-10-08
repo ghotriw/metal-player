@@ -48,6 +48,18 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor var showDebugHUD: Bool { get set }
     @MainActor var audioTracks: [MediaDemuxer.AudioTrack] { get }
     @MainActor var selectedAudioTrackId: Int { get }
+    @MainActor var subtitleTracks: [SubtitleTrack] { get }
+    @MainActor var selectedSubtitleTrackId: Int? { get }
+    @MainActor var currentSubtitleText: String? { get }
+    @MainActor var currentSubtitleCue: SubtitleCue? { get }
+    @MainActor var currentSubtitleCues: [SubtitleCue] { get }
+    @MainActor var subtitleFontSize: Double { get set }
+    @MainActor var subtitleTextColorHex: String { get set }
+    @MainActor var subtitleBgColorHex: String { get set }
+    @MainActor var subtitleBgOpacity: Double { get set }
+
+    @MainActor func selectSubtitleTrack(id: Int?)
+    @MainActor func loadExternalSubtitle(url: URL)
 
     @MainActor func load(path: String)
     @MainActor func load(path: String, headers: [String: String])

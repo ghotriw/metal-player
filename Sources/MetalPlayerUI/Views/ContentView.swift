@@ -14,6 +14,7 @@ public struct ContentView: View {
     @State private var hideTimer: Task<Void, Never>?
     @FocusState private var isFocused: Bool
 
+    @MainActor
     public init(
         engine: PlayerEngine,
         uiState: PlayerUIState = PlayerUIState(),
@@ -70,6 +71,17 @@ public struct ContentView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .shadow(radius: 12)
             }
+
+            // Subtitles Overlay
+            SubtitleOverlayView(
+                cues: engine.currentSubtitleCues,
+                fontSize: engine.subtitleFontSize,
+                textColor: Color(hex: engine.subtitleTextColorHex) ?? .white,
+                backgroundColor: Color(hex: engine.subtitleBgColorHex) ?? .black,
+                backgroundOpacity: engine.subtitleBgOpacity
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
 
             // Performance Telemetry HUD
             if engine.showDebugHUD {

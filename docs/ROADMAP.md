@@ -24,7 +24,7 @@ flowchart TD
     M1["Stage 1: H.264 / HEVC / DV P5 / HLG ✅"] --> M15["Stage 1.5: Dolby Vision Profile 8/8.1 RPU Engine"]
     M15 --> M2["Stage 2: Audio Pipeline ✅"]
     M2 --> M3["Stage 3: Network & Remote Streaming"]
-    M3 --> M4["Stage 4: Subtitles Subsystem SRT/ASS"]
+    M3 --> M4["Stage 4: Subtitles Subsystem SRT/VTT ✅"]
     M4 --> M5["Stage 5: WKWebView Bridge"]
     M5 --> M6["Stage 6: Desktop UI & UX Controls ✅"]
     M6 --> M7["Stage 7: Standalone App Bundling & Release"]
@@ -124,15 +124,30 @@ flowchart TD
 
 ---
 
-### Stage 4: Subtitles Subsystem (SRT & ASS)
-> High-performance subtitle overlay for foreign language content.
+### Stage 4: Subtitles Subsystem (Text & Embedded Subtitles) — [COMPLETED] ✅
+> High-performance subtitle overlay for foreign language content with customizable appearance and positioning.
 
-- **4.1. Text-based Subtitles (SRT, WebVTT):**
-  - Extract embedded subtitle streams from MKV/MP4 containers and load external `.srt` files.
-  - Synchronize subtitle cues against master timeline `currentTime`.
-- **4.2. Universal Subtitle Overlay Layer:**
-  - Position subtitle rendering overlay above both `CAMetalLayer` and `AVSampleBufferDisplayLayer`.
-  - Automatic scaling, typography styling, and safe margins handling.
+- [x] **4.1. Text-based Subtitle Parsers (SRT, WebVTT):**
+  - Robust parser for standard SubRip (`.srt`) and WebVTT (`.vtt`) files.
+  - Cleans HTML tags (`<b>`, `<i>`, `<u>`, `<font>`) and raw styling directives while preserving timing.
+  - $O(\log N)$ binary search for active cue retrieval matching presentation timestamp (PTS).
+- [x] **4.2. Embedded Subtitle Demuxing:**
+  - Traversal and extraction of subtitle streams (`AVMEDIA_TYPE_SUBTITLE`) from MKV and MP4 containers.
+  - Support for `subrip` (SRT), `webvtt`, and `mov_text`.
+  - Detection of track metadata (language codes, titles, `isForced`, `isSDH` tags).
+- [x] **4.3. Alignment Directives & Positioning:**
+  - Parsing ASS/SSA alignment tags (`{\an1}` – `{\an9}`, `{\a1}` – `{\a11}`).
+  - Dynamic positioning in `SubtitleOverlayView`: top-aligned dialogs (`\an8`, `\an7`, `\an9`) render at top of screen without obscuring bottom subtitles.
+  - Full-surface overlay ignoring macOS window safe area margins for symmetric top/bottom layout.
+- [x] **4.4. UI Controls & User Appearance Customization:**
+  - Track picker in `ControlsOverlay` with "Off", embedded tracks, and "Load Subtitle File…" panel.
+  - Expanded Settings dialog with dedicated **Subtitles** tab.
+  - Live interactive preview with dark movie gradient.
+  - Configurable font size (16–54 pt), text color, background box color, and background opacity (0%–100%).
+  - Persistence across sessions via `UserDefaults` / `PlayerConfiguration`.
+- [ ] **4.5. Advanced ASS/SSA Styling & Bitmap Subtitles:**
+  - Full ASS drawing/typesetting support via `libass` integration.
+  - Bitmap subtitle overlays: PGS (Blu-ray `hdmv_pgs_subtitle`) and VOBSUB (DVD).
 
 ---
 

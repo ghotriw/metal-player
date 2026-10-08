@@ -31,6 +31,18 @@ public struct PlayerConfiguration: Sendable, Equatable {
     /// Fraction of video duration after which it is considered completed (default 0.95).
     public var resumeEndThresholdRatio: Double
 
+    /// Font size for text subtitles (default 24.0).
+    public var subtitleFontSize: Double
+
+    /// Subtitle text color as hex string (default "#FFFFFF").
+    public var subtitleTextColorHex: String
+
+    /// Subtitle background box color as hex string (default "#000000").
+    public var subtitleBgColorHex: String
+
+    /// Subtitle background opacity (0.0 ... 1.0, default 0.65).
+    public var subtitleBgOpacity: Double
+
     /// Explicit start time in seconds requested on launch (if provided, overrides resume history).
     public var startTime: Double?
 
@@ -44,6 +56,10 @@ public struct PlayerConfiguration: Sendable, Equatable {
         resumePlayback: Bool = true,
         resumeStartThreshold: Double = 15.0,
         resumeEndThresholdRatio: Double = 0.95,
+        subtitleFontSize: Double = 24.0,
+        subtitleTextColorHex: String = "#FFFFFF",
+        subtitleBgColorHex: String = "#000000",
+        subtitleBgOpacity: Double = 0.65,
         startTime: Double? = nil
     ) {
         self.enableToneMapping = enableToneMapping
@@ -55,6 +71,10 @@ public struct PlayerConfiguration: Sendable, Equatable {
         self.resumePlayback = resumePlayback
         self.resumeStartThreshold = resumeStartThreshold
         self.resumeEndThresholdRatio = resumeEndThresholdRatio
+        self.subtitleFontSize = subtitleFontSize
+        self.subtitleTextColorHex = subtitleTextColorHex
+        self.subtitleBgColorHex = subtitleBgColorHex
+        self.subtitleBgOpacity = subtitleBgOpacity
         self.startTime = startTime
     }
 
@@ -64,6 +84,10 @@ public struct PlayerConfiguration: Sendable, Equatable {
     public static let keyResumePlayback = "MetalPlayer.resumePlayback"
     public static let keyResumeStartThreshold = "MetalPlayer.resumeStartThreshold"
     public static let keyResumeEndThresholdRatio = "MetalPlayer.resumeEndThresholdRatio"
+    public static let keySubtitleFontSize = "MetalPlayer.subtitleFontSize"
+    public static let keySubtitleTextColorHex = "MetalPlayer.subtitleTextColorHex"
+    public static let keySubtitleBgColorHex = "MetalPlayer.subtitleBgColorHex"
+    public static let keySubtitleBgOpacity = "MetalPlayer.subtitleBgOpacity"
 
     /// Loads configuration from UserDefaults, falling back to defaults if not set.
     public static func loadFromUserDefaults(userDefaults: UserDefaults = .standard) -> PlayerConfiguration {
@@ -86,6 +110,18 @@ public struct PlayerConfiguration: Sendable, Equatable {
         if let endThreshold = userDefaults.object(forKey: keyResumeEndThresholdRatio) as? NSNumber {
             config.resumeEndThresholdRatio = endThreshold.doubleValue
         }
+        if let fontSize = userDefaults.object(forKey: keySubtitleFontSize) as? NSNumber {
+            config.subtitleFontSize = fontSize.doubleValue
+        }
+        if let textColor = userDefaults.string(forKey: keySubtitleTextColorHex) {
+            config.subtitleTextColorHex = textColor
+        }
+        if let bgColor = userDefaults.string(forKey: keySubtitleBgColorHex) {
+            config.subtitleBgColorHex = bgColor
+        }
+        if let bgOpacity = userDefaults.object(forKey: keySubtitleBgOpacity) as? NSNumber {
+            config.subtitleBgOpacity = bgOpacity.doubleValue
+        }
         return config
     }
 
@@ -97,6 +133,10 @@ public struct PlayerConfiguration: Sendable, Equatable {
         userDefaults.set(resumePlayback, forKey: Self.keyResumePlayback)
         userDefaults.set(resumeStartThreshold, forKey: Self.keyResumeStartThreshold)
         userDefaults.set(resumeEndThresholdRatio, forKey: Self.keyResumeEndThresholdRatio)
+        userDefaults.set(subtitleFontSize, forKey: Self.keySubtitleFontSize)
+        userDefaults.set(subtitleTextColorHex, forKey: Self.keySubtitleTextColorHex)
+        userDefaults.set(subtitleBgColorHex, forKey: Self.keySubtitleBgColorHex)
+        userDefaults.set(subtitleBgOpacity, forKey: Self.keySubtitleBgOpacity)
     }
 
     /// Parses command-line arguments into a configuration structure and returns

@@ -1,6 +1,7 @@
 import AppKit
 import MetalPlayerCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct ControlsOverlay: View {
     @Bindable var engine: PlayerEngine
@@ -161,6 +162,25 @@ public struct ControlsOverlay: View {
                     .buttonStyle(.plain)
                     .help("Select Audio Track")
                 }
+
+                // Subtitle Track Selector
+                Button {
+                    showSubtitleTrackMenu()
+                } label: {
+                    Image(
+                        systemName: engine.selectedSubtitleTrackId != nil
+                            ? "captions.bubble.fill"
+                            : "captions.bubble"
+                    )
+                    .font(.system(size: 19))
+                    .foregroundStyle(
+                        engine.selectedSubtitleTrackId != nil
+                            ? Color.accentColor
+                            : Color.white.opacity(0.85)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Select Subtitles")
             }
             .padding(.horizontal, 18)
             .padding(.vertical, 14)
@@ -224,6 +244,69 @@ public struct ControlsOverlay: View {
             item.representedObject = target
             menu.addItem(item)
         }
+
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    private func showSubtitleTrackMenu() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        // "Off" option
+        let offItem = NSMenuItem(
+            title: "Off",
+            action: #selector(AudioTrackMenuHelper.selectTrack(_:)),
+            keyEquivalent: ""
+        )
+        offItem.state = (engine.selectedSubtitleTrackId == nil) ? .on : .off
+        let offTarget = AudioTrackMenuHelper { [weak engine] in
+            engine?.selectSubtitleTrack(id: nil)
+        }
+        offItem.target = offTarget
+        offItem.representedObject = offTarget
+        menu.addItem(offItem)
+
+        if !engine.subtitleTracks.isEmpty {
+            menu.addItem(NSMenuItem.separator())
+            for track in engine.subtitleTracks {
+                let item = NSMenuItem(
+                    title: track.title,
+                    action: #selector(AudioTrackMenuHelper.selectTrack(_:)),
+                    keyEquivalent: ""
+                )
+                item.state = (track.id == engine.selectedSubtitleTrackId) ? .on : .off
+                let target = AudioTrackMenuHelper { [weak engine] in
+                    engine?.selectSubtitleTrack(id: track.id)
+                }
+                item.target = target
+                item.representedObject = target
+                menu.addItem(item)
+            }
+        }
+
+        menu.addItem(NSMenuItem.separator())
+        let loadExternalItem = NSMenuItem(
+            title: "Load Subtitle File...",
+            action: #selector(AudioTrackMenuHelper.selectTrack(_:)),
+            keyEquivalent: ""
+        )
+        let loadTarget = AudioTrackMenuHelper { [weak engine] in
+            let panel = NSOpenPanel()
+            panel.title = "Select Subtitle File"
+            panel.allowedContentTypes = [
+                UTType(filenameExtension: "srt"),
+                UTType(filenameExtension: "vtt"),
+            ].compactMap { $0 }
+            panel.allowsMultipleSelection = false
+            panel.canChooseDirectories = false
+            panel.canChooseFiles = true
+            if panel.runModal() == .OK, let url = panel.url {
+                engine?.loadExternalSubtitle(url: url)
+            }
+        }
+        loadExternalItem.target = loadTarget
+        loadExternalItem.representedObject = loadTarget
+        menu.addItem(loadExternalItem)
 
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }

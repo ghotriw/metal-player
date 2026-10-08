@@ -95,6 +95,10 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.isToneMappingPermitted = config.enableToneMapping
         self.metalTargetNits = config.targetNits
         self.metalSharpness = config.sharpness
+        self.subtitleFontSize = config.subtitleFontSize
+        self.subtitleTextColorHex = config.subtitleTextColorHex
+        self.subtitleBgColorHex = config.subtitleBgColorHex
+        self.subtitleBgOpacity = config.subtitleBgOpacity
     }
 
     // Audio properties
@@ -110,6 +114,53 @@ public final class PlayerEngine: PlayerEngineProtocol {
     }
     public var audioTracks: [MediaDemuxer.AudioTrack] = []
     public var selectedAudioTrackId: Int = -1
+
+    public var subtitleTracks: [SubtitleTrack] = []
+    public var selectedSubtitleTrackId: Int? = nil
+    public var currentSubtitleCue: SubtitleCue? {
+        currentSubtitleCues.first
+    }
+    public var currentSubtitleCues: [SubtitleCue] = []
+    public var currentSubtitleText: String? {
+        currentSubtitleCue?.text
+    }
+    public var subtitleFontSize: Double = 24.0
+    public var subtitleTextColorHex: String = "#FFFFFF"
+    public var subtitleBgColorHex: String = "#000000"
+    public var subtitleBgOpacity: Double = 0.65
+    private var activeSubtitleDocument: SubtitleDocument? = nil
+    private var lastObservedLiveSubtitleVersion: Int = -1
+
+    private func updateActiveSubtitles(at seconds: Double) {
+        if let id = selectedSubtitleTrackId,
+            let track = subtitleTracks.first(where: { $0.id == id }),
+            !track.isExternal,
+            let demuxer,
+            let path = currentPath,
+            MediaDemuxer.isNetworkURL(path)
+        {
+            // For live network streams, refresh the document only when in-band cues version changes
+            let currentVersion = demuxer.liveSubtitleVersion
+            if currentVersion != self.lastObservedLiveSubtitleVersion || self.activeSubtitleDocument == nil {
+                self.lastObservedLiveSubtitleVersion = currentVersion
+                self.activeSubtitleDocument = demuxer.getLiveSubtitleDocument()
+            }
+            if let doc = self.activeSubtitleDocument {
+                self.currentSubtitleCues = doc.activeCues(at: seconds)
+            } else {
+                self.currentSubtitleCues = []
+            }
+            return
+        }
+
+        if let doc = self.activeSubtitleDocument {
+            self.currentSubtitleCues = doc.activeCues(at: seconds)
+        } else {
+            self.currentSubtitleCues = []
+        }
+    }
+    private var loadedSubtitleDocuments: [Int: SubtitleDocument] = [:]
+    private var currentHeaders: [String: String] = [:]
 
     nonisolated private static let enqueueSampleBufferSelector = sel_registerName("enqueueSampleBuffer:")
     nonisolated private static let flushSelector = sel_registerName("flush")
@@ -182,6 +233,10 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.metalTargetNits = configuration.targetNits
         self.metalSharpness = configuration.sharpness
         self.volume = configuration.initialVolume
+        self.subtitleFontSize = configuration.subtitleFontSize
+        self.subtitleTextColorHex = configuration.subtitleTextColorHex
+        self.subtitleBgColorHex = configuration.subtitleBgColorHex
+        self.subtitleBgOpacity = configuration.subtitleBgOpacity
 
         metalRenderer?.uniforms.targetNits = configuration.targetNits
         metalRenderer?.uniforms.outputSharpness = configuration.sharpness
@@ -222,6 +277,10 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 MainActor.assumeIsolated {
                     self.currentTime = seconds
                     self.onTimeUpdate?(seconds, self.duration)
+
+                    // Update active subtitle cues
+                    self.updateActiveSubtitles(at: seconds)
+
                     // Check if playback reached the end
                     if self.isPlaying && self.duration > 0 && seconds >= (self.duration - 0.25) {
                         self.stopPlaybackPipeline()
@@ -526,7 +585,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
             return
         }
 
-        applyLoadedDemuxer(demuxer, path: path, requestedStartTime: startTime)
+        applyLoadedDemuxer(demuxer, path: path, headers: headers, requestedStartTime: startTime)
     }
 
     private func loadSync(path: String, headers: [String: String], startTime: Double?) {
@@ -564,7 +623,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
             return
         }
 
-        applyLoadedDemuxer(demuxer, path: path, requestedStartTime: startTime)
+        applyLoadedDemuxer(demuxer, path: path, headers: headers, requestedStartTime: startTime)
     }
 
     public func stop() {
@@ -590,9 +649,12 @@ public final class PlayerEngine: PlayerEngineProtocol {
         )
     }
 
-    private func applyLoadedDemuxer(_ demuxer: MediaDemuxer, path: String, requestedStartTime: Double?) {
+    private func applyLoadedDemuxer(
+        _ demuxer: MediaDemuxer, path: String, headers: [String: String], requestedStartTime: Double?
+    ) {
         self.demuxer = demuxer
         self.currentPath = path
+        self.currentHeaders = headers
         self.duration = demuxer.durationSeconds
         self.videoWidth = demuxer.width
         self.videoHeight = demuxer.height
@@ -607,6 +669,12 @@ public final class PlayerEngine: PlayerEngineProtocol {
         }
         self.audioTracks = demuxer.audioTracks
         self.selectedAudioTrackId = demuxer.selectedAudioTrackIndex
+        self.subtitleTracks = demuxer.subtitleTracks
+        self.selectedSubtitleTrackId = nil
+        self.activeSubtitleDocument = nil
+        self.currentSubtitleCues.removeAll()
+        self.loadedSubtitleDocuments.removeAll()
+        self.lastObservedLiveSubtitleVersion = -1
         self.isLoading = false
         self.isLoaded = true
         self.loadError = nil
@@ -913,6 +981,92 @@ public final class PlayerEngine: PlayerEngineProtocol {
         }
     }
 
+    public func selectSubtitleTrack(id: Int?) {
+        guard let id else {
+            // Disable subtitles
+            self.selectedSubtitleTrackId = nil
+            self.activeSubtitleDocument = nil
+            self.currentSubtitleCues.removeAll()
+            self.lastObservedLiveSubtitleVersion = -1
+            demuxer?.selectSubtitleTrack(trackId: nil)
+            return
+        }
+
+        guard let track = subtitleTracks.first(where: { $0.id == id }) else { return }
+        self.selectedSubtitleTrackId = id
+        demuxer?.selectSubtitleTrack(trackId: id)
+
+        if track.isExternal {
+            self.activeSubtitleDocument = loadedSubtitleDocuments[id]
+            self.updateActiveSubtitles(at: currentTime)
+        } else if let path = currentPath {
+            if MediaDemuxer.isNetworkURL(path) {
+                // For network streams: bind immediately to in-band demuxed cues.
+                // Do NOT launch a background secondary demuxer that hangs trying to reach EOF or fails on single-token URLs.
+                let liveDoc = demuxer?.getLiveSubtitleDocument() ?? SubtitleDocument(cues: [])
+                self.lastObservedLiveSubtitleVersion = demuxer?.liveSubtitleVersion ?? -1
+                self.activeSubtitleDocument = liveDoc
+                self.updateActiveSubtitles(at: currentTime)
+                print(
+                    "[PlayerEngine] Selected network subtitle track id=\(id) ('\(track.title)'). Active in-band streaming."
+                )
+            } else if let cached = loadedSubtitleDocuments[id] {
+                self.activeSubtitleDocument = cached
+                self.updateActiveSubtitles(at: currentTime)
+            } else {
+                let headers = self.currentHeaders
+                let demuxer = self.demuxer
+                Task.detached(priority: .userInitiated) { [weak self, demuxer, path, headers] in
+                    let doc = demuxer?.loadSubtitleDocument(for: id, url: path, headers: headers)
+                    await MainActor.run {
+                        guard let self, self.selectedSubtitleTrackId == id else { return }
+                        if let doc {
+                            self.loadedSubtitleDocuments[id] = doc
+                            self.activeSubtitleDocument = doc
+                            self.updateActiveSubtitles(at: self.currentTime)
+                        } else {
+                            print(
+                                "[PlayerEngine] Warning: Failed to extract embedded subtitle document for track id=\(id)"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    public func loadExternalSubtitle(url: URL) {
+        var content: String? = nil
+        let encodings: [String.Encoding] = [.utf8, .windowsCP1251, .windowsCP1252, .isoLatin1, .utf16]
+        for enc in encodings {
+            if let str = try? String(contentsOf: url, encoding: enc) {
+                content = str
+                break
+            }
+        }
+
+        guard let validContent = content else {
+            print("[PlayerEngine] Unable to decode subtitle file with supported encodings:", url)
+            return
+        }
+
+        let isVTT = url.pathExtension.lowercased() == "vtt" || validContent.hasPrefix("WEBVTT")
+        let document = isVTT ? SubtitleDocument.parseWebVTT(validContent) : SubtitleDocument.parseSRT(validContent)
+
+        let trackId = 1000 + subtitleTracks.count
+        let trackName = url.deletingPathExtension().lastPathComponent
+        let track = SubtitleTrack(
+            id: trackId,
+            streamIndex: -1,
+            title: "\(trackName) (External)",
+            language: "und",
+            isExternal: true
+        )
+        subtitleTracks.append(track)
+        loadedSubtitleDocuments[trackId] = document
+        selectSubtitleTrack(id: trackId)
+    }
+
     public func play() {
         guard isLoaded else { return }
 
@@ -974,6 +1128,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         frameQueue.clear(resetDroppedFrames: true)
 
         currentTime = seconds
+        updateActiveSubtitles(at: seconds)
         let targetTime = CMTime(seconds: seconds, preferredTimescale: 1000)
 
         let decoder = self.decoder

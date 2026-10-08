@@ -119,6 +119,21 @@ struct PlayerEngineTests {
         #expect(engine.mediaTitle == "w_hdm_full.mkv")
         #expect(!engine.audioTracks.isEmpty)
 
+        // Subtitles verification: w_hdm_full.mkv contains 5 subrip tracks
+        #expect(engine.subtitleTracks.count == 5)
+        #expect(engine.selectedSubtitleTrackId == nil)
+
+        // Select first track and verify track selection
+        let firstSub = engine.subtitleTracks[0]
+        #expect(firstSub.isForced == true)
+        engine.selectSubtitleTrack(id: firstSub.id)
+        #expect(engine.selectedSubtitleTrackId == firstSub.id)
+
+        // Turn subtitles off
+        engine.selectSubtitleTrack(id: nil)
+        #expect(engine.selectedSubtitleTrackId == nil)
+        #expect(engine.currentSubtitleText == nil)
+
         // Play and pause
         engine.play()
         #expect(engine.isPlaying == true)
