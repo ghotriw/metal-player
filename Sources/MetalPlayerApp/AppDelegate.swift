@@ -23,11 +23,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let mediaPath = parsed.mediaPath {
             if MediaDemuxer.isNetworkURL(mediaPath), let url = URL(string: mediaPath) {
-                openStream(url: url, headers: parsed.configuration.httpHeaders)
+                openStream(
+                    url: url, headers: parsed.configuration.httpHeaders, startTime: parsed.configuration.startTime)
                 NSApp.activate()
                 return
             } else if FileManager.default.fileExists(atPath: mediaPath) {
-                openMediaFile(at: URL(fileURLWithPath: mediaPath))
+                openMediaFile(at: URL(fileURLWithPath: mediaPath), startTime: parsed.configuration.startTime)
                 NSApp.activate()
                 return
             }
@@ -54,11 +55,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         welcomeWindowController?.window?.makeKeyAndOrderFront(nil)
     }
 
-    func openMediaFile(at url: URL) {
-        openStream(url: url, headers: [:])
+    func openMediaFile(at url: URL, startTime: Double? = nil) {
+        openStream(url: url, headers: [:], startTime: startTime)
     }
 
-    func openStream(url: URL, headers: [String: String]) {
+    func openStream(url: URL, headers: [String: String], startTime: Double? = nil) {
         if playerWindowController == nil {
             let controller = PlayerWindowController(configuration: configuration)
             controller.onClose = { [weak self] in
@@ -77,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         welcomeWindowController?.close()
 
         // Open stream or file in main player window
-        playerWindowController?.openStream(url: url, headers: headers)
+        playerWindowController?.openStream(url: url, headers: headers, startTime: startTime)
         isPlayerActive = true
         activePlayer = playerWindowController
     }
@@ -126,9 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func updateConfiguration(_ newConfig: PlayerConfiguration) {
-        self.configuration.enableToneMapping = newConfig.enableToneMapping
-        self.configuration.sharpness = newConfig.sharpness
-        self.configuration.targetNits = newConfig.targetNits
+        self.configuration = newConfig
         self.playerWindowController?.applyConfiguration(self.configuration)
     }
 
@@ -138,6 +137,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         {
             NSApp.applicationIconImage = icon
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        playerWindowController?.engine.saveCurrentPlaybackProgress()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

@@ -22,13 +22,29 @@ public struct PlayerConfiguration: Sendable, Equatable {
     /// Custom HTTP headers to pass when streaming over HTTP/HTTPS (e.g. for custom authentication tokens).
     public var httpHeaders: [String: String]
 
+    /// Whether to automatically resume playback from previously saved position (default true).
+    public var resumePlayback: Bool
+
+    /// Minimum seconds played before a position is saved / resumed (default 15.0).
+    public var resumeStartThreshold: Double
+
+    /// Fraction of video duration after which it is considered completed (default 0.95).
+    public var resumeEndThresholdRatio: Double
+
+    /// Explicit start time in seconds requested on launch (if provided, overrides resume history).
+    public var startTime: Double?
+
     public init(
         enableToneMapping: Bool = true,
         defaultRenderMode: RenderMode = .auto,
         targetNits: Float = 203.0,
         sharpness: Float = 0.5,
         initialVolume: Float = 1.0,
-        httpHeaders: [String: String] = [:]
+        httpHeaders: [String: String] = [:],
+        resumePlayback: Bool = true,
+        resumeStartThreshold: Double = 15.0,
+        resumeEndThresholdRatio: Double = 0.95,
+        startTime: Double? = nil
     ) {
         self.enableToneMapping = enableToneMapping
         self.defaultRenderMode = defaultRenderMode
@@ -36,11 +52,18 @@ public struct PlayerConfiguration: Sendable, Equatable {
         self.sharpness = sharpness
         self.initialVolume = initialVolume
         self.httpHeaders = httpHeaders
+        self.resumePlayback = resumePlayback
+        self.resumeStartThreshold = resumeStartThreshold
+        self.resumeEndThresholdRatio = resumeEndThresholdRatio
+        self.startTime = startTime
     }
 
     public static let keyEnableToneMapping = "MetalPlayer.enableToneMapping"
     public static let keyTargetNits = "MetalPlayer.targetNits"
     public static let keySharpness = "MetalPlayer.sharpness"
+    public static let keyResumePlayback = "MetalPlayer.resumePlayback"
+    public static let keyResumeStartThreshold = "MetalPlayer.resumeStartThreshold"
+    public static let keyResumeEndThresholdRatio = "MetalPlayer.resumeEndThresholdRatio"
 
     /// Loads configuration from UserDefaults, falling back to defaults if not set.
     public static func loadFromUserDefaults(userDefaults: UserDefaults = .standard) -> PlayerConfiguration {
@@ -54,6 +77,15 @@ public struct PlayerConfiguration: Sendable, Equatable {
         if let sharpness = userDefaults.object(forKey: keySharpness) as? NSNumber {
             config.sharpness = sharpness.floatValue
         }
+        if userDefaults.object(forKey: keyResumePlayback) != nil {
+            config.resumePlayback = userDefaults.bool(forKey: keyResumePlayback)
+        }
+        if let startThreshold = userDefaults.object(forKey: keyResumeStartThreshold) as? NSNumber {
+            config.resumeStartThreshold = startThreshold.doubleValue
+        }
+        if let endThreshold = userDefaults.object(forKey: keyResumeEndThresholdRatio) as? NSNumber {
+            config.resumeEndThresholdRatio = endThreshold.doubleValue
+        }
         return config
     }
 
@@ -62,6 +94,9 @@ public struct PlayerConfiguration: Sendable, Equatable {
         userDefaults.set(enableToneMapping, forKey: Self.keyEnableToneMapping)
         userDefaults.set(targetNits, forKey: Self.keyTargetNits)
         userDefaults.set(sharpness, forKey: Self.keySharpness)
+        userDefaults.set(resumePlayback, forKey: Self.keyResumePlayback)
+        userDefaults.set(resumeStartThreshold, forKey: Self.keyResumeStartThreshold)
+        userDefaults.set(resumeEndThresholdRatio, forKey: Self.keyResumeEndThresholdRatio)
     }
 
     /// Parses command-line arguments into a configuration structure and returns
@@ -103,6 +138,19 @@ public struct PlayerConfiguration: Sendable, Equatable {
                 if let val = Float(arg.dropFirst("--volume=".count)) {
                     config.initialVolume = max(0.0, min(1.0, val))
                 }
+            } else if arg.starts(with: "--start-time=") {
+                if let val = Double(arg.dropFirst("--start-time=".count)) {
+                    config.startTime = max(0.0, val)
+                }
+            } else if arg == "--start-time" && i + 1 < arguments.count {
+                i += 1
+                if let val = Double(arguments[i]) {
+                    config.startTime = max(0.0, val)
+                }
+            } else if arg == "--no-resume" || arg == "--disable-resume" {
+                config.resumePlayback = false
+            } else if arg == "--resume" || arg == "--enable-resume" {
+                config.resumePlayback = true
             } else if arg.starts(with: "--header=") {
                 let headerStr = String(arg.dropFirst("--header=".count))
                 if let colonIdx = headerStr.firstIndex(of: ":") {

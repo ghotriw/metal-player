@@ -77,6 +77,13 @@ public final class NativePlayerEngine: PlayerEngine {
         }
     }
 
+    public func applyConfiguration(_ config: PlayerConfiguration) {
+        self.configuration = config
+        self.isToneMappingPermitted = config.enableToneMapping
+        self.metalTargetNits = config.targetNits
+        self.metalSharpness = config.sharpness
+    }
+
     // Audio properties
     public var volume: Float = 1.0 {
         didSet {
@@ -112,6 +119,10 @@ public final class NativePlayerEngine: PlayerEngine {
     private var audioConfigObserver: (any NSObjectProtocol)?
     private var audioAutoFlushObserver: (any NSObjectProtocol)?
     private var timeObserver: Any?
+    private var lastSavedProgressSeconds: Double = 0.0
+    private var configuration: PlayerConfiguration
+    private var currentPath: String?
+    public let historyStore: PlaybackHistoryStore
     @ObservationIgnored
     private let isFeeding = OSAllocatedUnfairLock(initialState: false)
     @ObservationIgnored
@@ -150,7 +161,9 @@ public final class NativePlayerEngine: PlayerEngine {
         self.init(configuration: PlayerConfiguration())
     }
 
-    public init(configuration: PlayerConfiguration) {
+    public init(configuration: PlayerConfiguration, historyStore: PlaybackHistoryStore = .shared) {
+        self.configuration = configuration
+        self.historyStore = historyStore
         self.renderMode = configuration.defaultRenderMode
         self.isToneMappingPermitted = configuration.enableToneMapping
         self.metalTargetNits = configuration.targetNits
@@ -195,6 +208,11 @@ public final class NativePlayerEngine: PlayerEngine {
             if !seconds.isNaN && !seconds.isInfinite && seconds >= 0 {
                 MainActor.assumeIsolated {
                     self.currentTime = seconds
+                    // Throttled periodic progress auto-save every 15 seconds
+                    if abs(seconds - self.lastSavedProgressSeconds) >= 15.0 {
+                        self.lastSavedProgressSeconds = seconds
+                        self.saveCurrentPlaybackProgress()
+                    }
                 }
             }
         }
@@ -405,27 +423,40 @@ public final class NativePlayerEngine: PlayerEngine {
     }
 
     public func load(path: String) {
-        load(path: path, headers: [:])
+        load(path: path, headers: [:], startTime: nil)
     }
 
     public func load(path: String, headers: [String: String]) {
+        load(path: path, headers: headers, startTime: nil)
+    }
+
+    public func load(path: String, headers: [String: String], startTime: Double?) {
         let isNetwork = MediaDemuxer.isNetworkURL(path)
         if isNetwork {
             loadingTask?.cancel()
             loadingTask = Task { @MainActor [weak self] in
-                await self?.loadAsync(path: path, headers: headers)
+                await self?.loadAsync(path: path, headers: headers, startTime: startTime)
             }
         } else {
-            loadSync(path: path, headers: headers)
+            loadSync(path: path, headers: headers, startTime: startTime)
         }
     }
 
     public func loadAsync(path: String) async {
-        await loadAsync(path: path, headers: [:])
+        await loadAsync(path: path, headers: [:], startTime: nil)
     }
 
     public func loadAsync(path: String, headers: [String: String]) async {
-        print("[NativePlayerEngine] Loading async:", path, "with headers count:", headers.count)
+        await loadAsync(path: path, headers: headers, startTime: nil)
+    }
+
+    public func loadAsync(path: String, headers: [String: String], startTime: Double?) async {
+        print(
+            "[NativePlayerEngine] Loading async:", path, "with headers count:", headers.count, "startTime:",
+            String(describing: startTime))
+
+        // Save progress for previously active media if present
+        saveCurrentPlaybackProgress()
 
         // Generate a new load ID and cancel any in-flight requests immediately
         let loadID = UUID()
@@ -468,11 +499,14 @@ public final class NativePlayerEngine: PlayerEngine {
             return
         }
 
-        applyLoadedDemuxer(demuxer, path: path)
+        applyLoadedDemuxer(demuxer, path: path, requestedStartTime: startTime)
     }
 
-    private func loadSync(path: String, headers: [String: String]) {
-        print("[NativePlayerEngine] Loading sync:", path)
+    private func loadSync(path: String, headers: [String: String], startTime: Double?) {
+        print("[NativePlayerEngine] Loading sync:", path, "startTime:", String(describing: startTime))
+
+        // Save progress for previously active media if present
+        saveCurrentPlaybackProgress()
 
         let loadID = UUID()
         self.currentLoadID = loadID
@@ -500,10 +534,11 @@ public final class NativePlayerEngine: PlayerEngine {
             return
         }
 
-        applyLoadedDemuxer(demuxer, path: path)
+        applyLoadedDemuxer(demuxer, path: path, requestedStartTime: startTime)
     }
 
     public func stop() {
+        saveCurrentPlaybackProgress()
         loadingTask?.cancel()
         loadingTask = nil
         currentInterruptContext?.cancel()
@@ -513,8 +548,20 @@ public final class NativePlayerEngine: PlayerEngine {
         pause()
     }
 
-    private func applyLoadedDemuxer(_ demuxer: MediaDemuxer, path: String) {
+    public func saveCurrentPlaybackProgress() {
+        guard let path = currentPath, duration > 0, currentTime > 0 else { return }
+        historyStore.savePosition(
+            for: path,
+            position: currentTime,
+            duration: duration,
+            startThreshold: configuration.resumeStartThreshold,
+            endThresholdRatio: configuration.resumeEndThresholdRatio
+        )
+    }
+
+    private func applyLoadedDemuxer(_ demuxer: MediaDemuxer, path: String, requestedStartTime: Double?) {
         self.demuxer = demuxer
+        self.currentPath = path
         self.duration = demuxer.durationSeconds
         self.videoWidth = demuxer.width
         self.videoHeight = demuxer.height
@@ -617,6 +664,31 @@ public final class NativePlayerEngine: PlayerEngine {
         self.audioReceiver.flush()
         self.audioDecoder?.flush()
 
+        // Determine effective start time using the priority chain:
+        // 1. Explicit requestedStartTime (Emby, CLI, deep link)
+        // 2. PlaybackHistoryStore saved position (if resume is enabled)
+        // 3. Fallback to 0.0
+        let effectiveStartTime: Double
+        if let explicit = requestedStartTime, explicit > 0 {
+            effectiveStartTime = min(explicit, max(0.0, self.duration - 1.0))
+            print("[NativePlayerEngine] Using explicit start time: \(effectiveStartTime)s (ignoring history)")
+        } else if configuration.resumePlayback,
+            let saved = historyStore.savedPosition(
+                for: path,
+                startThreshold: configuration.resumeStartThreshold,
+                endThresholdRatio: configuration.resumeEndThresholdRatio
+            )
+        {
+            effectiveStartTime = min(saved, max(0.0, self.duration - 1.0))
+            print("[NativePlayerEngine] Resuming playback from saved history: \(effectiveStartTime)s")
+        } else {
+            effectiveStartTime = 0.0
+        }
+
+        if effectiveStartTime > 0 {
+            demuxer.seek(to: effectiveStartTime)
+        }
+
         let decoder = self.decoder
         self.feedQueue.async { [weak self] in
             decoder.flush()
@@ -624,7 +696,9 @@ public final class NativePlayerEngine: PlayerEngine {
             DispatchQueue.main.async {
                 self.frameQueue.clear(resetDroppedFrames: true)
                 self.startFeeding()
-                self.synchronizer.setRate(1.0, time: .zero)
+                let targetCMTime = CMTime(seconds: effectiveStartTime, preferredTimescale: 60000)
+                self.currentTime = effectiveStartTime
+                self.synchronizer.setRate(1.0, time: targetCMTime)
                 self.displayLink?.isPaused = false
                 self.isPlaying = true
                 self.performanceMonitor.handlePlaybackStateChange(isPlaying: true)
@@ -829,6 +903,7 @@ public final class NativePlayerEngine: PlayerEngine {
         seekTask = nil
         isPlaying = false
         performanceMonitor.handlePlaybackStateChange(isPlaying: false)
+        saveCurrentPlaybackProgress()
     }
 
     public func togglePlayPause() {

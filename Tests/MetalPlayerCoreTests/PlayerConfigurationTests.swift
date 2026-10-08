@@ -78,4 +78,19 @@ struct PlayerConfigurationTests {
         #expect(config.httpHeaders["X-Api-Key"] == "test-api-key-12345")
         #expect(config.httpHeaders["Authorization"] == "Bearer token-xyz")
     }
+
+    @Test("CLI arguments correctly parse start-time and resume flags")
+    func testParseStartTimeAndResumeFlags() {
+        let args = [
+            "MetalPlayer",
+            "--start-time=124.5",
+            "--no-resume",
+            "movie.mkv",
+        ]
+        let (config, mediaPath) = PlayerConfiguration.parse(arguments: args)
+
+        #expect(mediaPath == "movie.mkv")
+        #expect(config.startTime == 124.5)
+        #expect(config.resumePlayback == false)
+    }
 }

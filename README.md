@@ -3,7 +3,7 @@
 A video player for macOS built on VideoToolbox, AVSampleBufferDisplayLayer, and Metal.
 
 > [!WARNING]
-> **Status: pre-alpha.** Not ready for everyday use. Network streaming, subtitles, and standalone packaging are not implemented yet.
+> **Status: pre-alpha.** Not ready for everyday use. Subtitles and standalone packaging are not implemented yet.
 
 ## Roadmap
 
@@ -13,6 +13,7 @@ A video player for macOS built on VideoToolbox, AVSampleBufferDisplayLayer, and 
 - [x] Diagnostics overlay: CPU/RAM, A/V drift, queue levels
 - [x] Desktop UX: keyboard shortcuts, double-click fullscreen, cursor auto-hide
 - [x] HTTP/HTTPS streaming with custom auth headers
+- [x] Resume playback & start time position control (Watch Later)
 - [ ] Dolby Vision Profile 8/8.1 RPU processing (per-frame L1 metadata)
 - [ ] AV1 (VideoToolbox on M3 and later, `dav1d` on M1/M2)
 - [ ] Subtitles: embedded and external SRT, WebVTT, ASS
@@ -20,6 +21,60 @@ A video player for macOS built on VideoToolbox, AVSampleBufferDisplayLayer, and 
 - [ ] Bundling FFmpeg dylibs into the app
 
 Details: [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## API Usage
+
+Add `MetalPlayer` to your `Package.swift`:
+
+```swift
+dependencies: [
+    .package(path: "../metal-player") // or git repository URL
+],
+targets: [
+    .target(
+        name: "YourApp",
+        dependencies: [
+            .product(name: "MetalPlayerKit", package: "metal-player")
+        ]
+    )
+]
+```
+
+### High-level Window API (`MetalPlayerKit`)
+
+```swift
+import MetalPlayerKit
+
+let controller = PlayerWindowController()
+
+// Stream remote media with custom auth headers and start from a specific second:
+controller.openStream(
+    url: URL(string: "https://media.server/stream.mkv")!,
+    headers: ["Authorization": "Bearer secret_token"],
+    startTime: 120.0 // Optional; overrides local resume history
+)
+
+// Open local media file:
+controller.openFile(
+    url: fileURL,
+    startTime: nil // Pass nil to automatically resume from saved position (if enabled)
+)
+```
+
+### Low-level Rendering Engine (`MetalPlayerCore`)
+
+```swift
+import MetalPlayerCore
+
+let engine = NativePlayerEngine()
+
+// Async loading for network streams:
+await engine.loadAsync(
+    path: "https://media.server/stream.mkv",
+    headers: ["X-Api-Key": "my-key"],
+    startTime: 300.0
+)
+```
 
 ## Requirements
 

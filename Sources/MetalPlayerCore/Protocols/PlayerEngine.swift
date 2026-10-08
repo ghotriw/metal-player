@@ -39,8 +39,10 @@ public protocol PlayerEngine: AnyObject, Sendable {
 
     @MainActor func load(path: String)
     @MainActor func load(path: String, headers: [String: String])
+    @MainActor func load(path: String, headers: [String: String], startTime: Double?)
     @MainActor func loadAsync(path: String) async
     @MainActor func loadAsync(path: String, headers: [String: String]) async
+    @MainActor func loadAsync(path: String, headers: [String: String], startTime: Double?) async
     @MainActor func stop()
     @MainActor func play()
     @MainActor func pause()

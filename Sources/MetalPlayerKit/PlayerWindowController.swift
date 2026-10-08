@@ -11,9 +11,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
     public var onKeyStatusChanged: ((Bool) -> Void)?
 
     public func applyConfiguration(_ config: PlayerConfiguration) {
-        engine.isToneMappingPermitted = config.enableToneMapping
-        engine.metalSharpness = config.sharpness
-        engine.metalTargetNits = config.targetNits
+        engine.applyConfiguration(config)
     }
 
     private var standardButtons: [NSButton] {
@@ -72,18 +70,18 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
         fatalError("init(coder:) has not been implemented")
     }
 
-    public func openFile(url: URL) {
-        openStream(url: url, headers: [:])
+    public func openFile(url: URL, startTime: Double? = nil) {
+        openStream(url: url, headers: [:], startTime: startTime)
     }
 
-    public func openStream(url: URL, headers: [String: String]) {
+    public func openStream(url: URL, headers: [String: String], startTime: Double? = nil) {
         let isNetwork = MediaDemuxer.isNetworkURL(url.absoluteString)
         window?.title =
             isNetwork
             ? (url.lastPathComponent.isEmpty ? url.host ?? url.absoluteString : url.lastPathComponent)
             : url.lastPathComponent
         let pathString = isNetwork ? url.absoluteString : url.path
-        engine.load(path: pathString, headers: headers)
+        engine.load(path: pathString, headers: headers, startTime: startTime)
         showWindow(nil)
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
