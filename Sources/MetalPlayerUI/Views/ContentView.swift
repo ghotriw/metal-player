@@ -4,19 +4,23 @@ import SwiftUI
 
 public struct ContentView: View {
     public let engine: NativePlayerEngine
+    public var uiState: PlayerUIState
     public var onFileLoaded: ((URL) -> Void)?
     public var onControlsVisibilityChanged: ((Bool) -> Void)?
 
     @State private var isControlsVisible: Bool = true
     @State private var isUserInteracting: Bool = false
     @State private var hideTimer: Task<Void, Never>?
+    @FocusState private var isFocused: Bool
 
     public init(
         engine: NativePlayerEngine,
+        uiState: PlayerUIState = PlayerUIState(),
         onFileLoaded: ((URL) -> Void)? = nil,
         onControlsVisibilityChanged: ((Bool) -> Void)? = nil
     ) {
         self.engine = engine
+        self.uiState = uiState
         self.onFileLoaded = onFileLoaded
         self.onControlsVisibilityChanged = onControlsVisibilityChanged
     }
@@ -56,7 +60,11 @@ public struct ContentView: View {
 
             // Controls Overlay
             if isControlsVisible || !engine.isLoaded || isUserInteracting {
-                ControlsOverlay(engine: engine, isInteracting: $isUserInteracting) {
+                ControlsOverlay(
+                    engine: engine,
+                    isInteracting: $isUserInteracting,
+                    isFullscreen: uiState.isFullscreen
+                ) {
                     openFileDialog()
                 }
                 .transition(.opacity.animation(.easeInOut(duration: 0.2)))
@@ -82,8 +90,12 @@ public struct ContentView: View {
         .onChange(of: isControlsVisible) { _, visible in
             onControlsVisibilityChanged?(visible)
         }
+        .focusable()
+        .focusEffectDisabled()
+        .focused($isFocused)
         .onAppear {
             onControlsVisibilityChanged?(isControlsVisible)
+            isFocused = true
         }
         // Keyboard shortcuts
         .onKeyPress(.space) {

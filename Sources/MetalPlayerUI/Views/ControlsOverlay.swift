@@ -5,6 +5,7 @@ import SwiftUI
 public struct ControlsOverlay: View {
     @Bindable var engine: NativePlayerEngine
     @Binding var isInteracting: Bool
+    var isFullscreen: Bool = false
     var onOpenFile: () -> Void
 
     @State private var isDragging: Bool = false
@@ -14,31 +15,33 @@ public struct ControlsOverlay: View {
 
     public var body: some View {
         VStack {
-            // Top Header Bar: File title in line with traffic lights
-            HStack(spacing: 8) {
-                if !engine.mediaTitle.isEmpty {
-                    Text(engine.mediaTitle)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
+            // Top Header Bar: File title in line with traffic lights (windowed mode only)
+            if !isFullscreen {
+                HStack(spacing: 8) {
+                    if !engine.mediaTitle.isEmpty {
+                        Text(engine.mediaTitle)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
 
-                Spacer()
-            }
-            .frame(height: 40)
-            // 78pt leading padding clears the three traffic lights (close, minimize, zoom)
-            .padding(.leading, 78)
-            .padding(.trailing, 20)
-            .background(.ultraThinMaterial)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(Color(NSColor.separatorColor))
-                    .frame(height: 1)
-            }
-            .onHover { hovering in
-                isTopHovered = hovering
-                updateInteractionState()
+                    Spacer()
+                }
+                .frame(height: 40)
+                // 78pt leading padding clears the three traffic lights (close, minimize, zoom)
+                .padding(.leading, 78)
+                .padding(.trailing, 20)
+                .background(.ultraThinMaterial)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(Color(NSColor.separatorColor))
+                        .frame(height: 1)
+                }
+                .onHover { hovering in
+                    isTopHovered = hovering
+                    updateInteractionState()
+                }
             }
 
             Spacer()
@@ -236,10 +239,17 @@ public struct ControlsOverlay: View {
         .onChange(of: isDragging) { _, _ in
             updateInteractionState()
         }
+        .onChange(of: isFullscreen) { _, fs in
+            if fs {
+                isTopHovered = false
+                updateInteractionState()
+            }
+        }
     }
 
     private func updateInteractionState() {
-        isInteracting = isBottomHovered || isTopHovered || isDragging
+        let topActive = !isFullscreen && isTopHovered
+        isInteracting = isBottomHovered || topActive || isDragging
     }
 
     private func formatTime(_ seconds: Double) -> String {
