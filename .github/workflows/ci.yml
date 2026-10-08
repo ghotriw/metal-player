@@ -27,13 +27,7 @@ jobs:
       - name: Ensure Metal Toolchain is installed
         run: |
           sudo xcodebuild -runFirstLaunch || true
-          sudo xcodebuild -downloadComponent metalToolchain || true
-          xcodebuild -showComponent metalToolchain || true
-          xcrun metal --version || true
-
-      - name: Verify direct shader compilation
-        run: |
-          xcrun metal -c Sources/MetalPlayerCore/Video/HDRToneMapping.metal -o /tmp/HDRToneMapping.air
+          sudo xcodebuild -downloadComponent metalToolchain
 
       - name: Lint check (code style)
         run: ./scripts/format.sh lint
