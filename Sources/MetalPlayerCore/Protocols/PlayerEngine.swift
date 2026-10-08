@@ -31,15 +31,21 @@ public protocol PlayerEngine: AnyObject, Sendable {
 
     @MainActor var volume: Float { get set }
     @MainActor var isMuted: Bool { get set }
+    @MainActor var showDebugHUD: Bool { get set }
     @MainActor var audioTracks: [MediaDemuxer.AudioTrack] { get }
     @MainActor var selectedAudioTrackId: Int { get }
 
     @MainActor func load(path: String)
     @MainActor func play()
     @MainActor func pause()
+    @MainActor func togglePlayPause()
     @MainActor func seek(to seconds: Double)
+    @MainActor func seekRelative(by seconds: Double)
     @MainActor func stepFrameForward()
     @MainActor func stepFrameBackward()
+    @MainActor func stepVolume(by delta: Float)
+    @MainActor func toggleMute()
+    @MainActor func toggleDebugHUD()
     @MainActor func renderCurrentFrame()
     @MainActor func selectAudioTrack(id: Int)
 }

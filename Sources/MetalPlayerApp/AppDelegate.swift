@@ -1,10 +1,14 @@
 import AppKit
 import MetalPlayerCore
 import MetalPlayerUI
+import Observation
 import SwiftUI
 
+@Observable
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var isPlayerActive: Bool = false
+    var activePlayer: (any PlayerActions)?
     private var welcomeWindowController: WelcomeWindowController?
     private(set) var playerWindowController: PlayerWindowController?
     private var configuration = PlayerConfiguration()
@@ -18,15 +22,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if let mediaPath = parsed.mediaPath, FileManager.default.fileExists(atPath: mediaPath) {
             openMediaFile(at: URL(fileURLWithPath: mediaPath))
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
             return
         }
 
         showWelcomeWindow()
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
     }
 
     func showWelcomeWindow() {
+        isPlayerActive = false
+        activePlayer = nil
         if welcomeWindowController == nil {
             welcomeWindowController = WelcomeWindowController(
                 onOpenURL: { [weak self] url in
@@ -42,8 +48,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if playerWindowController == nil {
             let controller = PlayerWindowController(configuration: configuration)
             controller.onClose = { [weak self] in
+                self?.isPlayerActive = false
+                self?.activePlayer = nil
                 // When player window closes, return to welcome window if app is still running
                 self?.showWelcomeWindow()
+            }
+            controller.onKeyStatusChanged = { [weak self] isKey in
+                self?.activePlayer = isKey ? self?.playerWindowController : nil
             }
             playerWindowController = controller
         }
@@ -53,6 +64,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Open file in main player window
         playerWindowController?.openFile(url: url)
+        isPlayerActive = true
+        activePlayer = playerWindowController
     }
 
     func promptOpenFile() {

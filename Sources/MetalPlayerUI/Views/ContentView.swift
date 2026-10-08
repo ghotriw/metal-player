@@ -5,6 +5,7 @@ import SwiftUI
 public struct ContentView: View {
     public let engine: NativePlayerEngine
     public var uiState: PlayerUIState
+    public let actions: any PlayerActions
     public var onFileLoaded: ((URL) -> Void)?
     public var onControlsVisibilityChanged: ((Bool) -> Void)?
 
@@ -16,11 +17,13 @@ public struct ContentView: View {
     public init(
         engine: NativePlayerEngine,
         uiState: PlayerUIState = PlayerUIState(),
+        actions: any PlayerActions,
         onFileLoaded: ((URL) -> Void)? = nil,
         onControlsVisibilityChanged: ((Bool) -> Void)? = nil
     ) {
         self.engine = engine
         self.uiState = uiState
+        self.actions = actions
         self.onFileLoaded = onFileLoaded
         self.onControlsVisibilityChanged = onControlsVisibilityChanged
     }
@@ -90,44 +93,19 @@ public struct ContentView: View {
         .onChange(of: isControlsVisible) { _, visible in
             onControlsVisibilityChanged?(visible)
         }
+        .onChange(of: uiState.controlsVisibilityTrigger) { _, _ in
+            showControlsTemporarily()
+        }
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
+        .defaultFocus($isFocused, true)
         .onAppear {
             onControlsVisibilityChanged?(isControlsVisible)
-            isFocused = true
         }
-        // Keyboard shortcuts
-        .onKeyPress(.space) {
-            engine.togglePlayPause()
-            showControlsTemporarily()
-            return .handled
-        }
-        .onKeyPress(KeyEquivalent("d")) {
-            withAnimation {
-                engine.showDebugHUD.toggle()
-            }
-            return .handled
-        }
-        .onKeyPress(
-            KeyEquivalent("i"),
-            action: {
-                withAnimation {
-                    engine.showDebugHUD.toggle()
-                }
-                return .handled
-            }
-        )
-        .onKeyPress(.leftArrow) {
-            engine.seekRelative(by: -5)
-            showControlsTemporarily()
-            return .handled
-        }
-        .onKeyPress(.rightArrow) {
-            engine.seekRelative(by: 5)
-            showControlsTemporarily()
-            return .handled
-        }
+        // Scene and focus actions for application menu shortcuts
+        .focusedSceneValue(\.playerActions, actions)
+        .focusedValue(\.playerActions, actions)
     }
 
     private func showControlsTemporarily() {

@@ -812,6 +812,18 @@ public final class NativePlayerEngine: PlayerEngine {
         seek(to: max(currentTime - frameDuration, 0))
     }
 
+    public func stepVolume(by delta: Float) {
+        volume = max(0.0, min(1.0, volume + delta))
+    }
+
+    public func toggleMute() {
+        isMuted.toggle()
+    }
+
+    public func toggleDebugHUD() {
+        showDebugHUD.toggle()
+    }
+
     isolated deinit {
         seekTask?.cancel()
         seekTask = nil
