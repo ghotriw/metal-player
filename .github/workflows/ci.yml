@@ -17,17 +17,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Select Xcode 27
+        run: sudo xcode-select -s /Applications/Xcode_27.app
+
       - name: Install dependencies
         run: |
           brew install ffmpeg pkg-config swift-format
 
-      # - name: Cache SPM dependencies
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: .build
-      #     key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'Package.swift') }}
-      #     restore-keys: |
-      #       ${{ runner.os }}-spm-
+      - name: Ensure Metal Toolchain is installed
+        run: |
+          sudo xcodebuild -runFirstLaunch || true
+          sudo xcodebuild -downloadComponent metalToolchain || true
+          xcodebuild -showComponent metalToolchain || true
+          xcrun metal --version || true
+
+      - name: Verify direct shader compilation
+        run: |
+          xcrun metal -c Sources/MetalPlayerCore/Video/HDRToneMapping.metal -o /tmp/HDRToneMapping.air
 
       - name: Lint check (code style)
         run: ./scripts/format.sh lint
