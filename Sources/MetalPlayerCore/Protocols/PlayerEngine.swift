@@ -4,8 +4,8 @@ import Foundation
 
 public enum RenderMode: String, CaseIterable, Identifiable, Sendable {
     case auto = "Auto (Display Adaptive)"
-    case system = "System (Apple DisplayLayer)"
-    case metalToneMap = "Custom Metal Tone-Mapping"
+    case system = "Hardware Passthrough (Apple DisplayLayer)"
+    case metalToneMap = "Metal Tone Mapping (BT.2390)"
 
     public var id: String { rawValue }
 }

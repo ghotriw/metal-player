@@ -5,6 +5,7 @@ import SwiftUI
 @MainActor
 public protocol PlayerActions: AnyObject {
     var renderMode: RenderMode { get set }
+    var metalSharpness: Float { get set }
     var isMuted: Bool { get }
     var showDebugHUD: Bool { get }
 

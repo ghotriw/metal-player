@@ -48,16 +48,6 @@ public struct ControlsOverlay: View {
 
             // Bottom Player Control Panel (Single row)
             HStack(spacing: 14) {
-                // Step frame backward
-                Button {
-                    engine.stepFrameBackward()
-                } label: {
-                    Image(systemName: "backward.frame.fill")
-                        .font(.system(size: 15))
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-                .buttonStyle(.plain)
-                .help("Previous frame (1/24s)")
 
                 // Seek 10s backward
                 Button {
@@ -88,17 +78,6 @@ public struct ControlsOverlay: View {
                         .foregroundStyle(.white.opacity(0.85))
                 }
                 .buttonStyle(.plain)
-
-                // Step frame forward
-                Button {
-                    engine.stepFrameForward()
-                } label: {
-                    Image(systemName: "forward.frame.fill")
-                        .font(.system(size: 15))
-                        .foregroundStyle(.white.opacity(0.85))
-                }
-                .buttonStyle(.plain)
-                .help("Next frame (1/24s)")
 
                 // Current time
                 Text(formatTime(isDragging ? dragPosition : engine.currentTime))
@@ -181,45 +160,6 @@ public struct ControlsOverlay: View {
                     }
                     .buttonStyle(.plain)
                     .help("Select Audio Track")
-                }
-
-                // Render Mode (HDR / SDR) Dropdown Button (visible only when tone mapping is permitted)
-                if engine.isToneMappingPermitted {
-                    Menu {
-                        ForEach(RenderMode.allCases) { mode in
-                            Button {
-                                engine.renderMode = mode
-                            } label: {
-                                let title =
-                                    (mode == .auto)
-                                    ? "Auto (\(engine.activeRenderMode == .system ? "Apple HDR" : "Metal SDR"))"
-                                    : mode.rawValue
-                                let isSelected = (engine.renderMode == mode)
-                                Text("\(isSelected ? "✓ " : "    ")\(title)")
-                            }
-                        }
-
-                        if engine.activeRenderMode == .metalToneMap {
-                            Divider()
-                            Menu("Sharpness: \(String(format: "%.1f", engine.metalSharpness))") {
-                                Button("0.0 (Off)") { engine.metalSharpness = 0.0 }
-                                Button("0.3 (Soft)") { engine.metalSharpness = 0.3 }
-                                Button("0.5 (Default)") { engine.metalSharpness = 0.5 }
-                                Button("0.7 (Crisp)") { engine.metalSharpness = 0.7 }
-                                Button("1.0 (Maximum)") { engine.metalSharpness = 1.0 }
-                            }
-                        }
-                    } label: {
-                        Text(engine.activeRenderMode == .system ? "HDR" : "SDR")
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundStyle(
-                                engine.activeRenderMode == .system ? Color.accentColor : Color.white.opacity(0.85)
-                            )
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .help("Render Mode (HDR / SDR)")
                 }
             }
             .padding(.horizontal, 18)

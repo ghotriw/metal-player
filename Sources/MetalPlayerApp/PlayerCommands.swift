@@ -84,6 +84,15 @@ struct PlayerCommands: Commands {
                 }
             }
             .disabled(playerActions == nil)
+
+            Menu("Tone Mapping Sharpness") {
+                Button("0.0 (Off)") { playerActions?.metalSharpness = 0.0 }
+                Button("0.3 (Soft)") { playerActions?.metalSharpness = 0.3 }
+                Button("0.5 (Default)") { playerActions?.metalSharpness = 0.5 }
+                Button("0.7 (Crisp)") { playerActions?.metalSharpness = 0.7 }
+                Button("1.0 (Maximum)") { playerActions?.metalSharpness = 1.0 }
+            }
+            .disabled(playerActions == nil)
         }
 
         CommandMenu("View") {

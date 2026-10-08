@@ -7,6 +7,7 @@ public struct ContentView: View {
     public var uiState: PlayerUIState
     public var onFileLoaded: ((URL) -> Void)?
     public var onControlsVisibilityChanged: ((Bool) -> Void)?
+    public var onToggleFullscreen: (() -> Void)?
 
     @State private var isControlsVisible: Bool = true
     @State private var isUserInteracting: Bool = false
@@ -17,12 +18,14 @@ public struct ContentView: View {
         engine: NativePlayerEngine,
         uiState: PlayerUIState = PlayerUIState(),
         onFileLoaded: ((URL) -> Void)? = nil,
-        onControlsVisibilityChanged: ((Bool) -> Void)? = nil
+        onControlsVisibilityChanged: ((Bool) -> Void)? = nil,
+        onToggleFullscreen: (() -> Void)? = nil
     ) {
         self.engine = engine
         self.uiState = uiState
         self.onFileLoaded = onFileLoaded
         self.onControlsVisibilityChanged = onControlsVisibilityChanged
+        self.onToggleFullscreen = onToggleFullscreen
     }
 
     public var body: some View {
@@ -35,6 +38,9 @@ public struct ContentView: View {
                 scheduleControlsHide()
             }
             .ignoresSafeArea()
+            .onTapGesture(count: 2) {
+                onToggleFullscreen?()
+            }
 
             // Subtle loading indicator while engine is parsing/decoding first frame
             if !engine.isLoaded {

@@ -45,6 +45,12 @@ final class PlayerWindow: NSWindow {
         case 0x31:  // Space
             actionHandler.togglePlayPause()
             return true
+        case 0x2B:  // Physical ',' (ANSI Comma, 0x2B / 43) -> Step 1 Frame Backward
+            actionHandler.stepFrameBackward()
+            return true
+        case 0x2F:  // Physical '.' (ANSI Period, 0x2F / 47) -> Step 1 Frame Forward
+            actionHandler.stepFrameForward()
+            return true
         case 0x7B:  // Left Arrow
             actionHandler.seekRelative(by: -5.0)
             return true

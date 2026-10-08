@@ -11,11 +11,11 @@ A video player for macOS built on VideoToolbox, AVSampleBufferDisplayLayer, and 
 - [x] Video: HEVC 10-bit, H.264 8/10-bit, Dolby Vision Profile 5, HLG
 - [x] Audio: master clock sync, multiple PCM tracks, Spatial Audio, 5.1/7.1
 - [x] Diagnostics overlay: CPU/RAM, A/V drift, queue levels
+- [x] Desktop UX: keyboard shortcuts, double-click fullscreen, cursor auto-hide
 - [ ] Dolby Vision Profile 8/8.1 RPU processing (per-frame L1 metadata)
 - [ ] AV1 (VideoToolbox on M3 and later, `dav1d` on M1/M2)
 - [ ] HTTP/HTTPS streaming with auth headers (Emby/Jellyfin)
 - [ ] Subtitles: embedded and external SRT, WebVTT, ASS
-- [ ] Auto-hide cursor in fullscreen, more keyboard shortcuts
 - [ ] Embedding the video view in a WKWebView-based client
 - [ ] Bundling FFmpeg dylibs into the app
 

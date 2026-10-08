@@ -19,7 +19,7 @@ public struct PerformanceHUDView: View {
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.6))
                 Spacer()
-                Text(engine.activeRenderMode == .system ? "Apple HDR" : "Metal SDR")
+                Text(engine.activeRenderMode == .system ? "Hardware Passthrough" : "Metal ToneMap")
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .foregroundStyle(engine.activeRenderMode == .system ? Color.accentColor : Color.green)
             }

@@ -53,6 +53,12 @@ final class PlayerWindowController: NSWindowController, NSWindowDelegate {
             },
             onControlsVisibilityChanged: { [weak self] isVisible in
                 self?.updateTrafficLightsVisibility(isVisible: isVisible)
+                if !isVisible, self?.window?.isKeyWindow == true {
+                    NSCursor.setHiddenUntilMouseMoves(true)
+                }
+            },
+            onToggleFullscreen: { [weak self] in
+                self?.toggleFullscreen()
             }
         )
         let hostingView = NSHostingView(rootView: contentView)
@@ -162,6 +168,14 @@ extension PlayerWindowController: PlayerActions {
         get { engine.renderMode }
         set {
             engine.renderMode = newValue
+            uiState.showControlsTemporarily()
+        }
+    }
+
+    var metalSharpness: Float {
+        get { engine.metalSharpness }
+        set {
+            engine.metalSharpness = newValue
             uiState.showControlsTemporarily()
         }
     }

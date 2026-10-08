@@ -26,7 +26,7 @@ flowchart TD
     M2 --> M3["Stage 3: Network & Remote Streaming"]
     M3 --> M4["Stage 4: Subtitles Subsystem SRT/ASS"]
     M4 --> M5["Stage 5: WKWebView Bridge"]
-    M5 --> M6["Stage 6: Desktop UI & UX Controls"]
+    M5 --> M6["Stage 6: Desktop UI & UX Controls ✅"]
     M6 --> M7["Stage 7: Standalone App Bundling & Release"]
     M2 -.-> M25["Stage 2.5: AV1 Hybrid Engine M3+ HW / Dav1d SW"]
 ```
@@ -152,20 +152,24 @@ flowchart TD
 
 ---
 
-### Stage 6: Desktop UI & UX Controls (SwiftUI Player Experience)
+### Stage 6: Desktop UI & UX Controls (SwiftUI Player Experience) — [COMPLETED] ✅
 > Polished, distraction-free desktop media player interface.
 
-- **6.1. Fullscreen Behavior & Cursor Autohide:**
-  - Automatically hide mouse cursor and controls overlay after 3 seconds of user inactivity.
-  - Borderless native macOS fullscreen mode.
-- **6.2. Keyboard Shortcuts:**
+- [x] **6.1. Fullscreen Behavior & Cursor Autohide:**
+  - Auto-hide mouse cursor via `NSCursor.setHiddenUntilMouseMoves(true)` and controls overlay after 2.5 seconds of user inactivity.
+  - Double-click on video surface to toggle fullscreen (with controls overlay click isolation).
+  - Native macOS borderless fullscreen mode with auto-hiding traffic lights.
+- [x] **6.2. Hardware Keyboard Shortcuts (Layout-Independent):**
+  - Low-level ANSI keycode interception in `PlayerWindow` (layout-independent: works reliably on Russian, English, and other layouts).
   - `Space` — Play / Pause.
   - `Left` / `Right` — Seek backward / forward (5 seconds).
-  - `J` / `K` / `L` — Standard rewind / pause / fast-forward shuttle controls.
-  - `Up` / `Down` — Volume adjustment (+/- 5%).
+  - `Option + Left` / `Option + Right` or `,` / `.` — Single frame step (1/24s).
+  - `Up` / `Down` — Volume adjustment (±5%).
   - `M` — Mute toggle.
-  - `F` — Fullscreen toggle.
-  - `[` / `]` — Single frame step (1/24s).
+  - `D` / `⌘I` — Performance HUD toggle.
+  - `F` / `⌃⌘F` — Fullscreen toggle.
+  - `Esc` — Exit fullscreen.
+  - Active text input protection: key events bypass player shortcuts when typing in `NSTextView` / `NSText`.
 
 ---
 
