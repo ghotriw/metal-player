@@ -1229,6 +1229,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
         let wasPlaying = isPlaying
         pause()
 
+        seekTask?.cancel()
+        seekTask = nil
+
         isFeeding.withLock { $0 = false }
         stopFeedingVideo()
         stopFeedingAudio()
@@ -1244,7 +1247,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         let decoder = self.decoder
 
         seekTask = Task.detached(priority: .userInitiated) { [weak self, demuxer, decoder] in
-            decoder.flush()
+            decoder.resetSession()
             demuxer.seek(to: seconds)
 
             guard !Task.isCancelled else { return }

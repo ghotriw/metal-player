@@ -153,6 +153,16 @@ public final class VTVideoDecoder: @unchecked Sendable {
         }
     }
 
+    /// Explicitly resets and invalidates the decompression session.
+    /// Next decode call will create a fresh session, preventing hardware decoder deadlocks.
+    public func resetSession() {
+        if let session {
+            VTDecompressionSessionInvalidate(session)
+            self.session = nil
+        }
+        self.currentFormatDescription = nil
+    }
+
     deinit {
         outputHandler = nil
         if let session {
