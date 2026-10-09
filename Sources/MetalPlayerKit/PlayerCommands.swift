@@ -118,5 +118,14 @@ public struct PlayerCommands: Commands {
             .keyboardShortcut("f", modifiers: [.control, .command])
             .disabled(playerActions == nil)
         }
+
+        CommandGroup(after: .windowArrangement) {
+            Divider()
+
+            Button("Show Log Console…") {
+                LogViewerWindowController.shared.showLogs()
+            }
+            .keyboardShortcut("l", modifiers: [.option, .command])
+        }
     }
 }

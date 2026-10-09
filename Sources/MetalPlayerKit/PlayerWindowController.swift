@@ -18,6 +18,8 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
     /// Dedicated callback when video finishes playing to the end
     public var onPlaybackEnded: (() -> Void)?
 
+    private var lastLoggedTimeSeconds: Double = -1.0
+
     public func applyConfiguration(_ config: PlayerConfiguration) {
         engine.applyConfiguration(config)
     }
@@ -78,6 +80,15 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
 
         engine.onTimeUpdate = { [weak self] current, dur in
             guard let self else { return }
+
+            if abs(current - self.lastLoggedTimeSeconds) >= 5.0 {
+                self.lastLoggedTimeSeconds = current
+                AppLog.debug(
+                    .engine,
+                    "Playback progress: \(String(format: "%.1f", current))s / \(String(format: "%.1f", dur))s"
+                )
+            }
+
             self.onTimeUpdate?(current, dur)
             self.nowPlayingController.update(
                 title: self.engine.mediaTitle,
@@ -90,6 +101,28 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
         }
         engine.onPlaybackStateChanged = { [weak self] state in
             guard let self else { return }
+
+            switch state {
+            case .idle:
+                AppLog.info(.engine, "Playback state: idle")
+            case .loading:
+                AppLog.info(.engine, "Playback state: loading '\(self.engine.mediaTitle)'")
+            case .playing:
+                AppLog.info(
+                    .engine,
+                    "Playback state: playing at \(String(format: "%.2f", self.engine.currentTime))s"
+                )
+            case .paused:
+                AppLog.info(
+                    .engine,
+                    "Playback state: paused at \(String(format: "%.2f", self.engine.currentTime))s"
+                )
+            case .completed:
+                AppLog.info(.engine, "Playback state: completed (EOF reached)")
+            case .failed(let error):
+                AppLog.error(.engine, "Playback state: failed with error: '\(error)'")
+            }
+
             self.onPlaybackStateChanged?(state)
             switch state {
             case .playing:
@@ -113,6 +146,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
             case .idle, .failed, .completed:
                 self.nowPlayingController.clear()
                 if state == .completed {
+                    AppLog.info(.engine, "Playback ended naturally")
                     self.onPlaybackEnded?()
                 }
             case .loading:
@@ -250,6 +284,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
     }
 
     public func windowWillClose(_ notification: Notification) {
+        AppLog.info(.ui, "Player window closing for: '\(engine.mediaTitle)'")
         nowPlayingController.clear()
         engine.stop()
         onClose?()

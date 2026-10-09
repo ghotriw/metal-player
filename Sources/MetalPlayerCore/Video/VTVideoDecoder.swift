@@ -149,7 +149,7 @@ public final class VTVideoDecoder: @unchecked Sendable {
         if status == noErr {
             self.session = newSession
         } else {
-            print("[VTVideoDecoder] VTDecompressionSessionCreate failed:", status)
+            AppLog.error(.video, "VTDecompressionSessionCreate failed: \(status)")
         }
     }
 

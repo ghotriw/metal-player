@@ -23,18 +23,18 @@ public final class FFAudioDecoder: @unchecked Sendable {
     public init?(codecParameters: UnsafePointer<AVCodecParameters>, timebase: AVRational) {
         let codecId = codecParameters.pointee.codec_id
         guard let codec = avcodec_find_decoder(codecId) else {
-            print("[FFAudioDecoder] Codec not found for id: \(codecId.rawValue)")
+            AppLog.error(.audio, "Codec not found for id: \(codecId.rawValue)")
             return nil
         }
 
         guard let ctx = avcodec_alloc_context3(codec) else {
-            print("[FFAudioDecoder] Failed to allocate AVCodecContext")
+            AppLog.error(.audio, "Failed to allocate AVCodecContext")
             return nil
         }
         self.codecCtx = ctx
 
         if avcodec_parameters_to_context(ctx, codecParameters) < 0 {
-            print("[FFAudioDecoder] Failed to copy codec parameters to context")
+            AppLog.error(.audio, "Failed to copy codec parameters to context")
             avcodec_free_context(&self.codecCtx)
             return nil
         }
@@ -42,7 +42,7 @@ public final class FFAudioDecoder: @unchecked Sendable {
         ctx.pointee.pkt_timebase = timebase
 
         if avcodec_open2(ctx, codec, nil) < 0 {
-            print("[FFAudioDecoder] Failed to open codec")
+            AppLog.error(.audio, "Failed to open codec")
             avcodec_free_context(&self.codecCtx)
             return nil
         }
@@ -110,11 +110,12 @@ public final class FFAudioDecoder: @unchecked Sendable {
 
         if status == noErr {
             self.audioFormatDescription = formatDesc
-            print(
-                "[FFAudioDecoder] Created CMAudioFormatDescription: \(targetChannels)ch @ 48kHz, tag: \(channelLayoutTag)"
+            AppLog.debug(
+                .audio,
+                "Created CMAudioFormatDescription: \(targetChannels)ch @ 48kHz, tag: \(channelLayoutTag)"
             )
         } else {
-            print("[FFAudioDecoder] Failed to create CMAudioFormatDescription: \(status)")
+            AppLog.error(.audio, "Failed to create CMAudioFormatDescription: \(status)")
         }
     }
 
@@ -159,12 +160,12 @@ public final class FFAudioDecoder: @unchecked Sendable {
         )
 
         guard ret == 0, let validSwr = newSwr else {
-            print("[FFAudioDecoder] swr_alloc_set_opts2 failed: \(ret)")
+            AppLog.error(.audio, "swr_alloc_set_opts2 failed: \(ret)")
             return false
         }
 
         if swr_init(validSwr) < 0 {
-            print("[FFAudioDecoder] swr_init failed")
+            AppLog.error(.audio, "swr_init failed")
             swr_free(&newSwr)
             return false
         }

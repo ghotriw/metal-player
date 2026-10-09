@@ -98,7 +98,7 @@ public final class MetalVideoRenderer: @unchecked Sendable {
     private func setupPipeline() {
         guard let defaultLibrary = (try? device.makeDefaultLibrary(bundle: .module)) ?? device.makeDefaultLibrary()
         else {
-            print("[MetalVideoRenderer] Failed to load Metal default library")
+            AppLog.error(.renderer, "Failed to load Metal default library")
             return
         }
 
@@ -113,7 +113,7 @@ public final class MetalVideoRenderer: @unchecked Sendable {
         do {
             pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDesc)
         } catch {
-            print("[MetalVideoRenderer] Pipeline state creation failed:", error)
+            AppLog.error(.renderer, "Pipeline state creation failed: \(error)")
         }
     }
 

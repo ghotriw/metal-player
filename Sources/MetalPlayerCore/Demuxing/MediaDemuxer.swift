@@ -88,8 +88,9 @@ public final class MediaDemuxer: @unchecked Sendable {
         self.liveSubtitleVersionInternal += 1
         if let trackId, let track = subtitleTracks.first(where: { $0.id == trackId }) {
             self.selectedSubtitleStreamIndex = track.streamIndex
-            print(
-                "[MediaDemuxer] Subtitle track selected: id=\(trackId), streamIndex=\(track.streamIndex), title='\(track.title)'"
+            AppLog.info(
+                .subtitles,
+                "Subtitle track selected: id=\(trackId), streamIndex=\(track.streamIndex), title='\(track.title)'"
             )
         } else {
             self.selectedSubtitleStreamIndex = -1
@@ -1230,8 +1231,9 @@ public final class MediaDemuxer: @unchecked Sendable {
         self.targetPts = target
         let streamIdx = videoStreamIndex >= 0 ? videoStreamIndex : audioStreamIndex
         let ret = av_seek_frame(ctx, Int32(streamIdx), target, AVSEEK_FLAG_BACKWARD)
-        print(
-            "[MediaDemuxer] av_seek_frame to targetPts: \(target) (seconds: \(seconds)), stream: \(streamIdx), ret: \(ret)"
+        AppLog.debug(
+            .demuxer,
+            "av_seek_frame to targetPts: \(target) (seconds: \(seconds)), stream: \(streamIdx), ret: \(ret)"
         )
     }
 

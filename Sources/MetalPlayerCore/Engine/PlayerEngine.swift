@@ -321,8 +321,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
 
     private func handleAudioConfigurationChange() {
         guard isPlaying else { return }
-        print(
-            "[PlayerEngine] Audio configuration changed (Spatial Audio toggle or route change)"
+        AppLog.info(
+            .audio,
+            "Audio configuration changed (Spatial Audio toggle or route change)"
         )
         audioReceiver.flush()
         audioDecoder?.flush()
@@ -652,10 +653,10 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.mediaTitle = Self.resolveTitle(from: path, explicitTitle: title)
         self.artworkData = artworkData
         self.artworkURL = artworkURL
-        print(
-            "[PlayerEngine] Loading async:", path, "title:", self.mediaTitle, "with headers count:", headers.count,
-            "startTime:",
-            String(describing: startTime))
+        AppLog.info(
+            .engine,
+            "Loading async: \(path) title: \(self.mediaTitle) with headers count: \(headers.count) startTime: \(String(describing: startTime))"
+        )
 
         // Save progress for previously active media if present
         saveCurrentPlaybackProgress()
@@ -692,7 +693,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
 
         // Prevent race condition: if another load started or task was cancelled, discard result
         if self.currentLoadID != loadID || Task.isCancelled || interruptContext.isCancelled {
-            print("[PlayerEngine] Loading was superseded or cancelled for:", path)
+            AppLog.warning(.engine, "Loading was superseded or cancelled for: \(path)")
             if self.currentLoadID == loadID {
                 self.isLoading = false
                 self.playbackState = .idle
@@ -701,7 +702,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         }
 
         guard let demuxer = newDemuxer else {
-            print("[PlayerEngine] Failed to open file or network stream:", path)
+            AppLog.error(.engine, "Failed to open file or network stream: \(path)")
             self.isLoading = false
             let err = "Failed to open stream or media file."
             self.loadError = err
@@ -723,8 +724,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.mediaTitle = Self.resolveTitle(from: path, explicitTitle: title)
         self.artworkData = artworkData
         self.artworkURL = artworkURL
-        print(
-            "[PlayerEngine] Loading sync:", path, "title:", self.mediaTitle, "startTime:", String(describing: startTime)
+        AppLog.info(
+            .engine,
+            "Loading sync: \(path) title: \(self.mediaTitle) startTime: \(String(describing: startTime))"
         )
 
         // Save progress for previously active media if present
@@ -753,7 +755,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         playbackState = .loading
 
         guard let demuxer = MediaDemuxer(url: path, headers: headers) else {
-            print("[PlayerEngine] Failed to open file:", path)
+            AppLog.error(.engine, "Failed to open file: \(path)")
             let err = "Failed to open media file."
             self.loadError = err
             self.playbackState = .failed(err)
@@ -888,8 +890,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
             )
         }
 
-        print(
-            "[PlayerEngine] Loaded successfully. Duration: \(self.duration)s, peakNits: \(demuxer.maxPeakNits), formatDesc: \(String(describing: demuxer.formatDescription))"
+        AppLog.info(
+            .engine,
+            "Loaded successfully. Duration: \(self.duration)s, peakNits: \(demuxer.maxPeakNits), formatDesc: \(String(describing: demuxer.formatDescription))"
         )
 
         // Initialize audio decoder if audio stream is present
@@ -897,12 +900,13 @@ public final class PlayerEngine: PlayerEngineProtocol {
             let decoder = FFAudioDecoder(codecParameters: audioParams, timebase: demuxer.audioTimebase)
             self.audioDecoder = decoder
             self.audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
-            print(
-                "[PlayerEngine] Audio decoder initialized: \(String(describing: self.audioDecoder != nil)), channels: \(demuxer.audioChannels), rate: \(demuxer.audioSampleRate)"
+            AppLog.info(
+                .audio,
+                "Audio decoder initialized: \(String(describing: self.audioDecoder != nil)), channels: \(demuxer.audioChannels), rate: \(demuxer.audioSampleRate)"
             )
         } else {
             self.audioDecoder = nil
-            print("[PlayerEngine] No audio track found or failed to get codec parameters")
+            AppLog.warning(.audio, "No audio track found or failed to get codec parameters")
         }
 
         if !demuxer.hasVideo {
@@ -920,7 +924,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         let effectiveStartTime: Double
         if let explicit = requestedStartTime, explicit > 0 {
             effectiveStartTime = min(explicit, max(0.0, self.duration - 1.0))
-            print("[PlayerEngine] Using explicit start time: \(effectiveStartTime)s (ignoring history)")
+            AppLog.info(.engine, "Using explicit start time: \(effectiveStartTime)s (ignoring history)")
         } else if configuration.resumePlayback,
             let saved = historyStore.savedPosition(
                 for: path,
@@ -929,7 +933,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
             )
         {
             effectiveStartTime = min(saved, max(0.0, self.duration - 1.0))
-            print("[PlayerEngine] Resuming playback from saved history: \(effectiveStartTime)s")
+            AppLog.info(.engine, "Resuming playback from saved history: \(effectiveStartTime)s")
         } else {
             effectiveStartTime = 0.0
         }
@@ -1036,7 +1040,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
 
             guard let sample = demuxer.nextVideoSample() else {
                 if demuxer.isEOF {
-                    print("[PlayerEngine] Demuxer reached EOF for video.")
+                    AppLog.debug(.engine, "Demuxer reached EOF for video.")
                     break
                 }
                 try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
@@ -1049,8 +1053,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
             }
             if count <= 5 || count % 200 == 0 {
                 let pts = CMSampleBufferGetPresentationTimeStamp(sample)
-                print(
-                    "[PlayerEngine] Decoding video sample #\(count), pts: \(CMTimeGetSeconds(pts))s, queueCount: \(queue.count)"
+                AppLog.debug(
+                    .video,
+                    "Decoding video sample #\(count), pts: \(CMTimeGetSeconds(pts))s, queueCount: \(queue.count)"
                 )
             }
 
@@ -1112,7 +1117,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
 
     public func selectAudioTrack(id: Int) {
         guard let demuxer = self.demuxer else { return }
-        print("[PlayerEngine] Switching to audio track: \(id)")
+        AppLog.info(.audio, "Switching to audio track: \(id)")
         let wasPlaying = isPlaying
         pause()
 
@@ -1162,8 +1167,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 self.lastObservedLiveSubtitleVersion = demuxer?.liveSubtitleVersion ?? -1
                 self.activeSubtitleDocument = liveDoc
                 self.updateActiveSubtitles(at: currentTime)
-                print(
-                    "[PlayerEngine] Selected network subtitle track id=\(id) ('\(track.title)'). Active in-band streaming."
+                AppLog.info(
+                    .subtitles,
+                    "Selected network subtitle track id=\(id) ('\(track.title)'). Active in-band streaming."
                 )
             } else if let cached = loadedSubtitleDocuments[id] {
                 self.activeSubtitleDocument = cached
@@ -1180,8 +1186,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
                             self.activeSubtitleDocument = doc
                             self.updateActiveSubtitles(at: self.currentTime)
                         } else {
-                            print(
-                                "[PlayerEngine] Warning: Failed to extract embedded subtitle document for track id=\(id)"
+                            AppLog.warning(
+                                .subtitles,
+                                "Warning: Failed to extract embedded subtitle document for track id=\(id)"
                             )
                         }
                     }
@@ -1201,7 +1208,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         }
 
         guard let validContent = content else {
-            print("[PlayerEngine] Unable to decode subtitle file with supported encodings:", url)
+            AppLog.error(.subtitles, "Unable to decode subtitle file with supported encodings: \(url)")
             return
         }
 
@@ -1269,7 +1276,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
     }
 
     public func seek(to seconds: Double) {
-        print("[PlayerEngine] Seeking to seconds:", seconds)
+        AppLog.info(.engine, "Seeking to seconds: \(seconds)")
         guard let demuxer = self.demuxer else { return }
         let wasPlaying = isPlaying
         pause()
@@ -1347,7 +1354,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 }
             }
         }
-        print("[PlayerEngine] Seek initiated asynchronously to:", targetTime.seconds)
+        AppLog.debug(.engine, "Seek initiated asynchronously to: \(targetTime.seconds)")
     }
 
     private nonisolated static func seekPreview(
