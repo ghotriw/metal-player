@@ -174,6 +174,23 @@ public final class PlayerEngine: PlayerEngineProtocol {
 
     nonisolated private static let enqueueSampleBufferSelector = sel_registerName("enqueueSampleBuffer:")
     nonisolated private static let flushSelector = sel_registerName("flush")
+    nonisolated private static let flushRemovingImageSelector = sel_registerName(
+        "flushWithRemovalOfDisplayedImage:completionHandler:")
+
+    /// Calls `flush(removingDisplayedImage: true)` via the Objective-C runtime.
+    /// The display layer is deliberately NOT attached to the render synchronizer (see video_architecture.md 3.1),
+    /// so the receiver-based replacement API is unavailable; this avoids the deprecation warning.
+    nonisolated private static func flushRemovingDisplayedImage(_ renderer: NSObject) {
+        typealias Fn = @convention(c) (AnyObject, Selector, Bool, @escaping @convention(block) () -> Void) -> Void
+        guard renderer.responds(to: flushRemovingImageSelector),
+            let imp = renderer.method(for: flushRemovingImageSelector)
+        else {
+            _ = renderer.perform(flushSelector)
+            return
+        }
+        let fn = unsafeBitCast(imp, to: Fn.self)
+        fn(renderer, flushRemovingImageSelector, true, {})
+    }
 
     nonisolated(unsafe) public let displayLayer = AVSampleBufferDisplayLayer()
     nonisolated(unsafe) private let sampleBufferRenderer: AVSampleBufferVideoRenderer
@@ -508,7 +525,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
     /// Completely flushes and clears the video display layer and Metal canvas, removing any lingering video frame.
     public func clearVideoSurface() {
         frameQueue.clear(resetDroppedFrames: true)
-        sampleBufferRenderer.flush(removingDisplayedImage: true) {}
+        Self.flushRemovingDisplayedImage(sampleBufferRenderer)
         metalRenderer?.clear()
     }
 

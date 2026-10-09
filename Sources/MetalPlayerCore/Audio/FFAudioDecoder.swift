@@ -121,6 +121,8 @@ public final class FFAudioDecoder: @unchecked Sendable {
     private var currentSrcChannels: Int32 = -1
     private var currentSrcFormat: Int32 = -1
     private var currentSrcRate: Int32 = -1
+    /// PTS (seconds) expected for the next output buffer; keeps timestamps sample-accurate. Reset on flush.
+    private var nextExpectedPts: Double?
 
     private func initSwrIfNeeded(srcFrame: UnsafeMutablePointer<AVFrame>) -> Bool {
         let frameChannels = srcFrame.pointee.ch_layout.nb_channels
@@ -258,12 +260,20 @@ public final class FFAudioDecoder: @unchecked Sendable {
 
             // Presentation timestamp
             let framePts = avFrame.pointee.pts
-            let ptsSeconds: Double
+            var ptsSeconds: Double
             if framePts != Int64.min && timebase.den > 0 {
                 ptsSeconds = Double(framePts) * Double(timebase.num) / Double(timebase.den)
             } else {
-                ptsSeconds = 0
+                ptsSeconds = nextExpectedPts ?? 0
             }
+            // Container timestamps are rounded to the container timebase (e.g. 1 ms in MKV), which does not
+            // divide frame durations such as DTS (512 samples) or FLAC evenly. Using them verbatim yields
+            // ±1 ms overlaps/gaps between consecutive buffers that the audio renderer renders as crackle.
+            // Keep PTS sample-accurate: advance by the exact number of samples, re-anchor only on real jumps.
+            if let expected = nextExpectedPts, abs(ptsSeconds - expected) < 0.05 {
+                ptsSeconds = expected
+            }
+            nextExpectedPts = ptsSeconds + Double(convertedSamples) / Double(targetSampleRate)
             let cmPts = CMTime(seconds: ptsSeconds, preferredTimescale: targetSampleRate)
             // In CoreMedia for audio buffers with sampleCount > 1, the duration in CMSampleTimingInfo
             // represents the duration of a SINGLE sample (1 / sampleRate), NOT the whole buffer!
@@ -301,6 +311,7 @@ public final class FFAudioDecoder: @unchecked Sendable {
         defer { lock.unlock() }
         if let ctx = codecCtx {
             avcodec_flush_buffers(ctx)
+            nextExpectedPts = nil
         }
         if let swr = swrCtx {
             swr_init(swr)

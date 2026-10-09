@@ -13,6 +13,8 @@ public enum SyntheticTestMediaFactory {
         case hevc10BitHDR
         /// 4K HEVC 10-bit HDR10 MKV with 5 SRT subtitle tracks, first forced (3 seconds)
         case uhdHDRSubtitles
+        /// H.264 video with AC3 5.1 (fltp), DTS 5.1 and 16-bit FLAC 5.1 (s16) audio tracks (10 seconds)
+        case exoticAudioTracks
 
         public var filename: String {
             switch self {
@@ -22,6 +24,8 @@ public enum SyntheticTestMediaFactory {
                 return "synth_audio_flac_51.flac"
             case .hevc10BitHDR:
                 return "synth_hevc_10bit_hdr.mp4"
+            case .exoticAudioTracks:
+                return "synth_exotic_audio_tracks.mkv"
             case .uhdHDRSubtitles:
                 return "synth_uhd_hdr_5subs.mkv"
             }
@@ -136,6 +140,23 @@ public enum SyntheticTestMediaFactory {
                 "-filter_complex", "[0:a]channelmap=0|0|0|0|0|0:5.1[a]",
                 "-map", "[a]",
                 "-c:a", "flac",
+                outputPath,
+            ]
+
+        case .exoticAudioTracks:
+            return [
+                "-y",
+                "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24:duration=10",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=10",
+                "-f", "lavfi", "-i", "sine=frequency=660:duration=10",
+                "-f", "lavfi", "-i", "sine=frequency=880:duration=10",
+                "-filter_complex",
+                "[1:a]channelmap=0|0|0|0|0|0:5.1[a1];[2:a]channelmap=0|0|0|0|0|0:5.1[a2];[3:a]aformat=sample_fmts=s16:sample_rates=48000,channelmap=0|0|0|0|0|0:5.1[a3]",
+                "-map", "0:v", "-map", "[a1]", "-map", "[a2]", "-map", "[a3]",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "24",
+                "-c:a:0", "ac3", "-b:a:0", "384k", "-metadata:s:a:0", "language=ukr",
+                "-c:a:1", "dts", "-strict", "-2", "-b:a:1", "768k", "-metadata:s:a:1", "language=eng",
+                "-c:a:2", "flac", "-sample_fmt:a:2", "s16", "-metadata:s:a:2", "language=eng",
                 outputPath,
             ]
 

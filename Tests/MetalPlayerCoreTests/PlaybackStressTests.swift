@@ -161,3 +161,30 @@ struct PlaybackStressTests {
         engine.stop()
     }
 }
+
+extension PlaybackStressTests {
+    // MARK: - 5. Exotic Audio Codecs (AC3 fltp / DTS / FLAC s16) Switching
+    @Test("Switching between AC3, DTS and 16-bit FLAC tracks under playback does not hang or crash")
+    @MainActor
+    func testExoticAudioCodecSwitching() async {
+        guard let path = SyntheticTestMediaFactory.ensureMedia(preset: .exoticAudioTracks) else { return }
+
+        let engine = PlayerEngine()
+        engine.load(path: path)
+        #expect(engine.isLoaded == true)
+        #expect(engine.audioTracks.count == 3)
+
+        engine.play()
+        for _ in 0..<3 {
+            for track in engine.audioTracks {
+                engine.selectAudioTrack(id: track.id)
+                #expect(engine.selectedAudioTrackId == track.id)
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
+        }
+        engine.seek(to: 5.0)
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        #expect(engine.isPlaying == true)
+        engine.stop()
+    }
+}
