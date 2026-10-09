@@ -4,7 +4,7 @@ import VideoToolbox
 import os
 
 public final class VTVideoDecoder: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = OSAllocatedUnfairLock()
     private var session: VTDecompressionSession?
     private var currentFormatDescription: CMFormatDescription?
 

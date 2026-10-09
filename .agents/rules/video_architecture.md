@@ -101,6 +101,8 @@ To support embedding into host applications with web-driven frontends (e.g., `WK
   - Switching between `.metalToneMap` and `.system` toggles layer visibility (`isMetalLayerVisible`) and clears the display layer (`sampleBufferRenderer.flush()`).
   - Because all frames are decoded continuously into `FrameQueue`, handover between Metal and Native HDR occurs with zero latency and zero frame stalling.
 - **Pipeline Queue Hygiene:** On seek or render mode handover, `frameQueue.clear()`, `decoder.flush()`, and renderer flush must be executed to flush stale frames and prevent stutter or packet queue desynchronization.
+- **Seek Serialization:** All seeks must be executed on the engine's serial `seekQueue` and carry a generation token (`currentSeekId`); a seek whose token is outdated must be discarded. Rapid scrubbing must never run concurrent demuxer seeks.
+- **No Session Teardown on Seek:** Seeking must call `decoder.flush()` and must NOT destroy/recreate the `VTDecompressionSession`. Before any invalidate/reset, `VTVideoDecoder` must call `VTDecompressionSessionWaitForAsynchronousFrames` so that in-flight output callbacks cannot race with session replacement. Session, format description and output handler are guarded by a lock.
 
 ### 3.2. Metal Tone-Mapping Color Engine (`HDRToneMapping.metal`)
 - **Input Format:** 10-bit P010 biplanar YCbCr (`r16Unorm` Y plane, `rg16Unorm` CbCr plane). Normalization must account for VideoToolbox MSB-alignment: `val * 65535.0 / 1023.0`.
@@ -153,6 +155,9 @@ To support embedding into host applications with web-driven frontends (e.g., `WK
 - Playback timing must remain driven by a single unified **`AVSampleBufferRenderSynchronizer`**.
 - Audio output must utilize `AVSampleBufferAudioRenderer` attached directly to this shared synchronizer.
 - This maintains hardware-locked audio/video synchronization without software clock drift.
+- **Resampler Robustness (`FFAudioDecoder`):**
+  - Planar multi-channel audio must be passed to `swr_convert` via `avFrame.pointee.extended_data` (NOT `data`, which holds only 8 pointers); otherwise >8 channels or some layouts crash with SIGSEGV.
+  - Frame format, sample rate and channel layout can change mid-stream or after a seek/track switch (e.g. 5.1 → stereo). The decoder must track them and free/re-create `SwrContext` whenever any of them changes.
 
 ### 4.2. Universal Demuxing & Color Metadata
 - Do not hardcode container metadata:
@@ -163,3 +168,10 @@ To support embedding into host applications with web-driven frontends (e.g., `WK
 ### 4.3. Pre-Commit Verification
 - The package must compile cleanly using `swift build` without errors.
 - Any modifications to `HDRToneMapping.metal` must be verified against NaN edge cases at maximum sharpness (`outputSharpness = 1.0`).
+- Changes to seek, decoding, audio or track-switching code must pass `swift test --filter PlaybackStressTests` (rapid scrubbing, frame-freeze detection, play/pause races, audio track switching).
+
+### 4.4. Test Media Policy
+- Tests must never reference personal/local media files or absolute user paths.
+- All media is synthesized on demand by `SyntheticTestMediaFactory` (FFmpeg `lavfi`, cached in `$TMPDIR/MetalPlayerSyntheticMedia/`). Add a new `Preset` there when a new codec/channel/container/HDR configuration needs coverage.
+- Frame-freeze detection uses `PixelBufferAnalyzer` (Y-plane hash / MAD).
+- If `ffmpeg` is missing, media-dependent tests skip silently; CI must install `ffmpeg`.

@@ -2,6 +2,7 @@ import CFFmpeg
 import CoreMedia
 import Foundation
 import VideoToolbox
+import os
 
 public final class MediaDemuxer: @unchecked Sendable {
     private var formatCtx: UnsafeMutablePointer<AVFormatContext>?
@@ -351,7 +352,7 @@ public final class MediaDemuxer: @unchecked Sendable {
     private var contentLightLevel: Data?
 
     public final class InterruptContext: @unchecked Sendable {
-        private let lock = NSLock()
+        private let lock = OSAllocatedUnfairLock()
         private var _isCancelled = false
 
         public init() {}
@@ -371,7 +372,7 @@ public final class MediaDemuxer: @unchecked Sendable {
 
     private let interruptContext: InterruptContext
     private let ownsInterruptContext: Bool
-    private let lock = NSLock()
+    private let lock = OSAllocatedUnfairLock()
     private var isEOFInternal: Bool = false
     public var isEOF: Bool {
         lock.lock()

@@ -18,7 +18,7 @@ public final class FFAudioDecoder: @unchecked Sendable {
     public let targetChannels: Int32
     public let channelLayoutTag: AudioChannelLayoutTag
 
-    private let lock = NSLock()
+    private let lock = OSAllocatedUnfairLock()
 
     public init?(codecParameters: UnsafePointer<AVCodecParameters>, timebase: AVRational) {
         let codecId = codecParameters.pointee.codec_id
