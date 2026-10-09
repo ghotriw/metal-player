@@ -52,6 +52,16 @@ public struct PlayerConfiguration: Sendable, Equatable {
     /// Explicit start time in seconds requested on launch (if provided, overrides resume history).
     public var startTime: Double?
 
+    /// Explicit audio track requested on launch: internal track id (`0, 1...`), explicit stream index
+    /// via `stream:N` / `s:N` (container stream index), or language code / title fragment
+    /// (if provided, overrides the track saved in resume history).
+    public var audioTrack: String?
+
+    /// Explicit subtitle track requested on launch: internal track id (`0, 1...`), explicit stream index
+    /// via `stream:N` / `s:N`, language code / title fragment, or `off` to disable subtitles
+    /// (if provided, overrides the track saved in resume history).
+    public var subtitleTrack: String?
+
     public init(
         enableToneMapping: Bool = true,
         defaultRenderMode: RenderMode = .auto,
@@ -68,7 +78,9 @@ public struct PlayerConfiguration: Sendable, Equatable {
         subtitleTextColorHex: String = "#FFFFFF",
         subtitleBgColorHex: String = "#000000",
         subtitleBgOpacity: Double = 0.65,
-        startTime: Double? = nil
+        startTime: Double? = nil,
+        audioTrack: String? = nil,
+        subtitleTrack: String? = nil
     ) {
         self.enableToneMapping = enableToneMapping
         self.defaultRenderMode = defaultRenderMode
@@ -86,6 +98,8 @@ public struct PlayerConfiguration: Sendable, Equatable {
         self.subtitleBgColorHex = subtitleBgColorHex
         self.subtitleBgOpacity = subtitleBgOpacity
         self.startTime = startTime
+        self.audioTrack = audioTrack
+        self.subtitleTrack = subtitleTrack
     }
 
     public static let keyEnableToneMapping = "MetalPlayer.enableToneMapping"
@@ -159,6 +173,11 @@ public struct PlayerConfiguration: Sendable, Equatable {
         userDefaults.set(subtitleBgOpacity, forKey: Self.keySubtitleBgOpacity)
     }
 
+    private static func nonEmpty(_ value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     /// Parses command-line arguments into a configuration structure and returns
     /// the configuration along with any remaining non-flag arguments (such as media paths).
     /// If `base` is supplied, command line flags will override values from `base`.
@@ -207,6 +226,16 @@ public struct PlayerConfiguration: Sendable, Equatable {
                 if let val = Double(arguments[i]) {
                     config.startTime = max(0.0, val)
                 }
+            } else if arg.starts(with: "--audio-track=") {
+                config.audioTrack = nonEmpty(String(arg.dropFirst("--audio-track=".count)))
+            } else if arg == "--audio-track" && i + 1 < arguments.count {
+                i += 1
+                config.audioTrack = nonEmpty(arguments[i])
+            } else if arg.starts(with: "--subtitle-track=") {
+                config.subtitleTrack = nonEmpty(String(arg.dropFirst("--subtitle-track=".count)))
+            } else if arg == "--subtitle-track" && i + 1 < arguments.count {
+                i += 1
+                config.subtitleTrack = nonEmpty(arguments[i])
             } else if arg == "--no-resume" || arg == "--disable-resume" {
                 config.resumePlayback = false
             } else if arg == "--resume" || arg == "--enable-resume" {

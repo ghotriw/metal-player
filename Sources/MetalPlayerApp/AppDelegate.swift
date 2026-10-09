@@ -24,11 +24,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let mediaPath = parsed.mediaPath {
             if MediaDemuxer.isNetworkURL(mediaPath), let url = URL(string: mediaPath) {
                 openStream(
-                    url: url, headers: parsed.configuration.httpHeaders, startTime: parsed.configuration.startTime)
+                    url: url, headers: parsed.configuration.httpHeaders, startTime: parsed.configuration.startTime,
+                    audioTrack: parsed.configuration.audioTrack, subtitleTrack: parsed.configuration.subtitleTrack)
                 NSApp.activate()
                 return
             } else if FileManager.default.fileExists(atPath: mediaPath) {
-                openMediaFile(at: URL(fileURLWithPath: mediaPath), startTime: parsed.configuration.startTime)
+                openMediaFile(
+                    at: URL(fileURLWithPath: mediaPath), startTime: parsed.configuration.startTime,
+                    audioTrack: parsed.configuration.audioTrack, subtitleTrack: parsed.configuration.subtitleTrack)
                 NSApp.activate()
                 return
             }
@@ -55,11 +58,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         welcomeWindowController?.window?.makeKeyAndOrderFront(nil)
     }
 
-    func openMediaFile(at url: URL, startTime: Double? = nil) {
-        openStream(url: url, headers: [:], startTime: startTime)
+    func openMediaFile(at url: URL, startTime: Double? = nil, audioTrack: String? = nil, subtitleTrack: String? = nil) {
+        openStream(url: url, headers: [:], startTime: startTime, audioTrack: audioTrack, subtitleTrack: subtitleTrack)
     }
 
-    func openStream(url: URL, headers: [String: String], startTime: Double? = nil) {
+    func openStream(
+        url: URL, headers: [String: String], startTime: Double? = nil, audioTrack: String? = nil,
+        subtitleTrack: String? = nil
+    ) {
         if playerWindowController == nil {
             let controller = PlayerWindowController(configuration: configuration)
             controller.onClose = { [weak self] _, _ in
@@ -79,7 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         welcomeWindowController?.close()
 
         // Open stream or file in main player window
-        playerWindowController?.openStream(url: url, headers: headers, startTime: startTime)
+        playerWindowController?.openStream(
+            url: url, headers: headers, startTime: startTime, audioTrack: audioTrack, subtitleTrack: subtitleTrack)
         isPlayerActive = true
         activePlayer = playerWindowController
     }

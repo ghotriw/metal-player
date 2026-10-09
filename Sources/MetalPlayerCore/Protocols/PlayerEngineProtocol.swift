@@ -76,7 +76,9 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
         artworkData: Data?,
         artworkURL: URL?,
         headers: [String: String],
-        startTime: Double?
+        startTime: Double?,
+        audioTrack: String?,
+        subtitleTrack: String?
     )
     @MainActor func loadAsync(path: String) async
     @MainActor func loadAsync(path: String, title: String?) async
@@ -88,7 +90,9 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
         artworkData: Data?,
         artworkURL: URL?,
         headers: [String: String],
-        startTime: Double?
+        startTime: Double?,
+        audioTrack: String?,
+        subtitleTrack: String?
     ) async
     @MainActor func stop()
     @MainActor func play()

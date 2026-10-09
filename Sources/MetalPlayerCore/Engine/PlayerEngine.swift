@@ -590,7 +590,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
         artworkData: Data?,
         artworkURL: URL?,
         headers: [String: String] = [:],
-        startTime: Double? = nil
+        startTime: Double? = nil,
+        audioTrack: String? = nil,
+        subtitleTrack: String? = nil
     ) {
         self.mediaTitle = Self.resolveTitle(from: path, explicitTitle: title)
         self.artworkData = artworkData
@@ -605,7 +607,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
                     artworkData: artworkData,
                     artworkURL: artworkURL,
                     headers: headers,
-                    startTime: startTime
+                    startTime: startTime,
+                    audioTrack: audioTrack,
+                    subtitleTrack: subtitleTrack
                 )
             }
         } else {
@@ -615,7 +619,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 artworkData: artworkData,
                 artworkURL: artworkURL,
                 headers: headers,
-                startTime: startTime
+                startTime: startTime,
+                audioTrack: audioTrack,
+                subtitleTrack: subtitleTrack
             )
         }
     }
@@ -654,7 +660,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
         artworkData: Data?,
         artworkURL: URL?,
         headers: [String: String] = [:],
-        startTime: Double? = nil
+        startTime: Double? = nil,
+        audioTrack: String? = nil,
+        subtitleTrack: String? = nil
     ) async {
         self.mediaTitle = Self.resolveTitle(from: path, explicitTitle: title)
         self.artworkData = artworkData
@@ -716,7 +724,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
             return
         }
 
-        applyLoadedDemuxer(demuxer, path: path, headers: headers, requestedStartTime: startTime)
+        applyLoadedDemuxer(
+            demuxer, path: path, headers: headers, requestedStartTime: startTime,
+            requestedAudioTrack: audioTrack, requestedSubtitleTrack: subtitleTrack)
     }
 
     private func loadSync(
@@ -725,7 +735,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
         artworkData: Data?,
         artworkURL: URL?,
         headers: [String: String],
-        startTime: Double?
+        startTime: Double?,
+        audioTrack: String?,
+        subtitleTrack: String?
     ) {
         self.mediaTitle = Self.resolveTitle(from: path, explicitTitle: title)
         self.artworkData = artworkData
@@ -768,7 +780,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
             return
         }
 
-        applyLoadedDemuxer(demuxer, path: path, headers: headers, requestedStartTime: startTime)
+        applyLoadedDemuxer(
+            demuxer, path: path, headers: headers, requestedStartTime: startTime,
+            requestedAudioTrack: audioTrack, requestedSubtitleTrack: subtitleTrack)
     }
 
     public func stop() {
@@ -791,18 +805,140 @@ public final class PlayerEngine: PlayerEngineProtocol {
     }
 
     public func saveCurrentPlaybackProgress() {
-        guard let path = currentPath, duration > 0, currentTime > 0 else { return }
-        historyStore.savePosition(
-            for: path,
-            position: currentTime,
-            duration: duration,
-            startThreshold: configuration.resumeStartThreshold,
-            endThresholdRatio: configuration.resumeEndThresholdRatio
-        )
+        guard let path = currentPath, duration > 0 else { return }
+        if currentTime > 0 {
+            historyStore.savePosition(
+                for: path,
+                position: currentTime,
+                duration: duration,
+                startThreshold: configuration.resumeStartThreshold,
+                endThresholdRatio: configuration.resumeEndThresholdRatio,
+                audioTrackId: hasAudioTrackSelection ? selectedAudioTrackId : nil,
+                subtitleTrackId: subtitleTrackIdForHistory
+            )
+        } else {
+            historyStore.saveTrackSelection(
+                for: path,
+                duration: duration,
+                audioTrackId: hasAudioTrackSelection ? selectedAudioTrackId : nil,
+                subtitleTrackId: subtitleTrackIdForHistory
+            )
+        }
+    }
+
+    public enum SubtitleSelectionPreference: Equatable, Sendable {
+        case disable
+        case select(trackId: Int)
+    }
+
+    /// Subtitle selection to persist: `subtitlesOff` when disabled, `nil` for external files (not restorable).
+    private var subtitleTrackIdForHistory: Int? {
+        guard let id = selectedSubtitleTrackId else { return PlaybackRecord.subtitlesOff }
+        if let track = subtitleTracks.first(where: { $0.id == id }), !track.isExternal {
+            return id
+        }
+        return nil
+    }
+
+    private var hasAudioTrackSelection: Bool { selectedAudioTrackId >= 0 }
+
+    /// Extracts an explicit stream index from strings formatted as `stream:N` or `s:N`.
+    private nonisolated static func parseStreamIndex(from key: String) -> Int? {
+        if key.hasPrefix("stream:") {
+            return Int(key.dropFirst("stream:".count))
+        } else if key.hasPrefix("s:") {
+            return Int(key.dropFirst("s:".count))
+        }
+        return nil
+    }
+
+    /// Resolves an audio track spec to a track id.
+    ///
+    /// Resolution order:
+    /// 1. Explicit container stream index via `stream:N` or `s:N` prefix (e.g. `stream:3`).
+    /// 2. Direct numeric value interpreted first as internal `track.id` (`0, 1, 2...`).
+    /// 3. Direct numeric value fallback to `streamIndex` if no matching `track.id` exists.
+    /// 4. Language code match (`matchesLanguage`, e.g. `eng`, `jpn`).
+    /// 5. Title fragment match (`matchesTitle`, e.g. `Commentary`).
+    public nonisolated static func resolveAudioTrackId(_ spec: String, in tracks: [MediaDemuxer.AudioTrack]) -> Int? {
+        let key = spec.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else { return nil }
+
+        // Explicit "stream:N" or "s:N" prefix (matching container stream index, e.g. from host app / FFmpeg)
+        if let streamIdx = parseStreamIndex(from: key),
+            let match = tracks.first(where: { $0.streamIndex == streamIdx })
+        {
+            return match.id
+        }
+
+        // Direct numeric match: prioritize track.id (0, 1, 2...), then fallback to container streamIndex
+        if let id = Int(key) {
+            if let byId = tracks.first(where: { $0.id == id }) { return byId.id }
+            if let byStream = tracks.first(where: { $0.streamIndex == id }) { return byStream.id }
+        }
+
+        if let byLang = tracks.first(where: { matchesLanguage($0.language, key) }) {
+            return byLang.id
+        }
+        return tracks.first(where: { matchesTitle($0.title, key) })?.id
+    }
+
+    /// Resolves a subtitle spec to a selection preference. Returns nil if unresolved.
+    ///
+    /// Resolution order:
+    /// 1. Sentinel disable keywords (`off`, `none`, `no`, `disabled`).
+    /// 2. Explicit container stream index via `stream:N` or `s:N` prefix (e.g. `stream:5`).
+    /// 3. Direct numeric value interpreted first as internal `track.id`.
+    /// 4. Direct numeric value fallback to `streamIndex` if no matching `track.id` exists.
+    /// 5. Language code match (`matchesLanguage`, e.g. `rus`).
+    /// 6. Title fragment match (`matchesTitle`, e.g. `SDH`).
+    public nonisolated static func resolveSubtitleSelection(_ spec: String, in tracks: [SubtitleTrack])
+        -> SubtitleSelectionPreference?
+    {
+        let key = spec.lowercased().trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else { return nil }
+        if ["off", "none", "no", "disabled"].contains(key) { return .disable }
+
+        // Explicit "stream:N" or "s:N" prefix (matching container stream index, e.g. from host app / FFmpeg)
+        if let streamIdx = parseStreamIndex(from: key),
+            let match = tracks.first(where: { $0.streamIndex == streamIdx })
+        {
+            return .select(trackId: match.id)
+        }
+
+        // Direct numeric match: prioritize track.id, then fallback to container streamIndex
+        if let id = Int(key) {
+            if let byId = tracks.first(where: { $0.id == id }) { return .select(trackId: byId.id) }
+            if let byStream = tracks.first(where: { $0.streamIndex == id }) { return .select(trackId: byStream.id) }
+        }
+
+        if let byLang = tracks.first(where: { matchesLanguage($0.language, key) }) {
+            return .select(trackId: byLang.id)
+        }
+        if let byTitle = tracks.first(where: { matchesTitle($0.title, key) }) {
+            return .select(trackId: byTitle.id)
+        }
+        return nil
+    }
+
+    private nonisolated static func matchesLanguage(_ language: String, _ key: String) -> Bool {
+        let lang = language.lowercased().trimmingCharacters(in: .whitespaces)
+        return !lang.isEmpty && lang != "und" && (lang == key || lang.hasPrefix(key + "-") || key.hasPrefix(lang + "-"))
+    }
+
+    private nonisolated static func matchesTitle(_ title: String, _ key: String) -> Bool {
+        let lowerTitle = title.lowercased()
+        // If key is very short (1 or 2 characters), require exact word match or exact title match
+        if key.count < 3 {
+            let words = lowerTitle.components(separatedBy: CharacterSet.alphanumerics.inverted)
+            return words.contains(key)
+        }
+        return lowerTitle.contains(key)
     }
 
     private func applyLoadedDemuxer(
-        _ demuxer: MediaDemuxer, path: String, headers: [String: String], requestedStartTime: Double?
+        _ demuxer: MediaDemuxer, path: String, headers: [String: String], requestedStartTime: Double?,
+        requestedAudioTrack: String?, requestedSubtitleTrack: String?
     ) {
         self.demuxer = demuxer
         self.currentPath = path
@@ -819,6 +955,27 @@ public final class PlayerEngine: PlayerEngineProtocol {
         if self.artworkData == nil, let embedded = demuxer.embeddedArtworkData {
             self.artworkData = embedded
         }
+        // Track selection priority chain (per kind):
+        // 1. Explicit request (CLI, host app, deep link)
+        // 2. PlaybackHistoryStore saved selection (if resume is enabled)
+        // 3. Demuxer default
+        let savedTracks =
+            configuration.resumePlayback
+            ? historyStore.savedTrackSelection(for: path)
+            : nil
+
+        if let spec = requestedAudioTrack,
+            let id = Self.resolveAudioTrackId(spec, in: demuxer.audioTracks)
+        {
+            demuxer.selectAudioTrack(trackId: id)
+            AppLog.info(.audio, "Using explicit audio track: \(id)")
+        } else if let saved = savedTracks?.audioTrackId,
+            demuxer.audioTracks.contains(where: { $0.id == saved })
+        {
+            demuxer.selectAudioTrack(trackId: saved)
+            AppLog.info(.audio, "Restored audio track from saved history: \(saved)")
+        }
+
         self.audioTracks = demuxer.audioTracks
         self.selectedAudioTrackId = demuxer.selectedAudioTrackIndex
         self.subtitleTracks = demuxer.subtitleTracks
@@ -830,6 +987,26 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.isLoading = false
         self.isLoaded = true
         self.loadError = nil
+
+        if let spec = requestedSubtitleTrack,
+            let preference = Self.resolveSubtitleSelection(spec, in: demuxer.subtitleTracks)
+        {
+            switch preference {
+            case .disable:
+                selectSubtitleTrack(id: nil)
+                AppLog.info(.subtitles, "Explicit subtitle selection: disabled")
+            case .select(let trackId):
+                selectSubtitleTrack(id: trackId)
+                AppLog.info(.subtitles, "Using explicit subtitle track: \(trackId)")
+            }
+        } else if let saved = savedTracks?.subtitleTrackId {
+            if saved == PlaybackRecord.subtitlesOff {
+                selectSubtitleTrack(id: nil)
+            } else if demuxer.subtitleTracks.contains(where: { $0.id == saved }) {
+                selectSubtitleTrack(id: saved)
+                AppLog.info(.subtitles, "Restored subtitle track from saved history: \(saved)")
+            }
+        }
 
         if demuxer.hasVideo {
             self.metalRenderer?.updateUniforms { uniforms in
@@ -924,7 +1101,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.audioDecoder?.flush()
 
         // Determine effective start time using the priority chain:
-        // 1. Explicit requestedStartTime (Emby, CLI, deep link)
+        // 1. Explicit requestedStartTime (CLI, host app, deep link)
         // 2. PlaybackHistoryStore saved position (if resume is enabled)
         // 3. Fallback to 0.0
         let effectiveStartTime: Double
@@ -1134,6 +1311,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
 
         demuxer.selectAudioTrack(trackId: id)
         self.selectedAudioTrackId = id
+        saveCurrentPlaybackProgress()
         if let params = demuxer.getAudioCodecParameters() {
             let decoder = FFAudioDecoder(codecParameters: params, timebase: demuxer.audioTimebase)
             self.audioDecoder = decoder
@@ -1155,12 +1333,14 @@ public final class PlayerEngine: PlayerEngineProtocol {
             self.currentSubtitleCues.removeAll()
             self.lastObservedLiveSubtitleVersion = -1
             demuxer?.selectSubtitleTrack(trackId: nil)
+            saveCurrentPlaybackProgress()
             return
         }
 
         guard let track = subtitleTracks.first(where: { $0.id == id }) else { return }
         self.selectedSubtitleTrackId = id
         demuxer?.selectSubtitleTrack(trackId: id)
+        saveCurrentPlaybackProgress()
 
         if track.isExternal {
             self.activeSubtitleDocument = loadedSubtitleDocuments[id]

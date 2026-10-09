@@ -131,4 +131,12 @@ struct PlayerConfigurationTests {
         let loaded = PlayerConfiguration.loadFromUserDefaults(userDefaults: defaults)
         #expect(loaded.subtitleFontWeight == "Heavy")
     }
+
+    @Test("CLI arguments correctly parse audio-track and subtitle-track flags")
+    func testParseTrackFlags() {
+        let args = ["MetalPlayer", "--audio-track=jpn", "--subtitle-track", "off", "/tmp/movie.mkv"]
+        let config = PlayerConfiguration.parse(arguments: args).configuration
+        #expect(config.audioTrack == "jpn")
+        #expect(config.subtitleTrack == "off")
+    }
 }

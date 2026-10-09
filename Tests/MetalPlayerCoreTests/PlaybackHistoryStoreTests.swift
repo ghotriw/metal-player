@@ -77,4 +77,55 @@ struct PlaybackHistoryStoreTests {
         store.clearAll()
         #expect(store.savedPosition(for: path2) == nil)
     }
+
+    @Test("PlaybackHistoryStore preserves and decodes audio and subtitle track selections")
+    func testTrackSelectionPersistenceAndBackwardCompatibility() {
+        let defaults = UserDefaults(suiteName: "PlaybackHistoryStoreTests.\(UUID().uuidString)")!
+        let store = PlaybackHistoryStore(userDefaults: defaults)
+        let path = "/movies/film_with_tracks.mkv"
+
+        // 1. Save position with tracks
+        store.savePosition(
+            for: path,
+            position: 120.0,
+            duration: 1000.0,
+            audioTrackId: 2,
+            subtitleTrackId: 1
+        )
+
+        let tracks = store.savedTrackSelection(for: path)
+        #expect(tracks?.audioTrackId == 2)
+        #expect(tracks?.subtitleTrackId == 1)
+
+        // 2. Explicitly update tracks at position 0 / start of video
+        store.saveTrackSelection(
+            for: path,
+            duration: 1000.0,
+            audioTrackId: 3,
+            subtitleTrackId: PlaybackRecord.subtitlesOff
+        )
+        let updatedTracks = store.savedTrackSelection(for: path)
+        #expect(updatedTracks?.audioTrackId == 3)
+        #expect(updatedTracks?.subtitleTrackId == PlaybackRecord.subtitlesOff)
+        // Position was preserved
+        #expect(store.savedPosition(for: path) == 120.0)
+
+        // 3. Backward compatibility: verify decoding legacy JSON record without track fields
+        let legacyPath = "/movies/legacy_film.mkv"
+        let legacyKey = store.storageKey(for: legacyPath)
+        let legacyJSON = """
+            {
+                "position": 350.0,
+                "duration": 1800.0,
+                "lastUpdated": 700000000.0
+            }
+            """.data(using: .utf8)!
+        defaults.set(legacyJSON, forKey: legacyKey)
+
+        let legacyPos = store.savedPosition(for: legacyPath)
+        #expect(legacyPos == 350.0)
+        let legacyTracks = store.savedTrackSelection(for: legacyPath)
+        #expect(legacyTracks?.audioTrackId == nil)
+        #expect(legacyTracks?.subtitleTrackId == nil)
+    }
 }

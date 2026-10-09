@@ -165,7 +165,9 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
         title: String? = nil,
         artworkData: Data? = nil,
         artworkURL: URL? = nil,
-        startTime: Double? = nil
+        startTime: Double? = nil,
+        audioTrack: String? = nil,
+        subtitleTrack: String? = nil
     ) {
         openStream(
             url: url,
@@ -173,7 +175,9 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
             artworkData: artworkData,
             artworkURL: artworkURL,
             headers: [:],
-            startTime: startTime
+            startTime: startTime,
+            audioTrack: audioTrack,
+            subtitleTrack: subtitleTrack
         )
     }
 
@@ -183,7 +187,9 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
         artworkData: Data? = nil,
         artworkURL: URL? = nil,
         headers: [String: String] = [:],
-        startTime: Double? = nil
+        startTime: Double? = nil,
+        audioTrack: String? = nil,
+        subtitleTrack: String? = nil
     ) {
         let isNetwork = MediaDemuxer.isNetworkURL(url.absoluteString)
         let pathString = isNetwork ? url.absoluteString : url.path
@@ -194,7 +200,9 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
             artworkData: artworkData,
             artworkURL: artworkURL,
             headers: headers,
-            startTime: startTime
+            startTime: startTime,
+            audioTrack: audioTrack,
+            subtitleTrack: subtitleTrack
         )
         window?.title = engine.mediaTitle
 

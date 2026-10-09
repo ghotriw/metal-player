@@ -343,4 +343,98 @@ struct PlayerEngineTests {
         engine.stop()
         #expect(engine.isLoaded == false)
     }
+
+    @Test("Track resolver resolves audio tracks by id, language, and title")
+    func testResolveAudioTrack() {
+        let tracks = [
+            MediaDemuxer.AudioTrack(
+                id: 0,
+                streamIndex: 1,
+                title: "Original Japanese (Stereo)",
+                language: "jpn",
+                codecName: "aac",
+                channels: 2,
+                sampleRate: 48000
+            ),
+            MediaDemuxer.AudioTrack(
+                id: 1,
+                streamIndex: 2,
+                title: "English Dub",
+                language: "eng",
+                codecName: "aac",
+                channels: 6,
+                sampleRate: 48000
+            ),
+            MediaDemuxer.AudioTrack(
+                id: 2,
+                streamIndex: 3,
+                title: "Russian Commentary",
+                language: "rus",
+                codecName: "aac",
+                channels: 2,
+                sampleRate: 48000
+            ),
+        ]
+
+        // Numerical ID
+        #expect(PlayerEngine.resolveAudioTrackId("1", in: tracks) == 1)
+        #expect(PlayerEngine.resolveAudioTrackId("0", in: tracks) == 0)
+
+        // Language code
+        #expect(PlayerEngine.resolveAudioTrackId("jpn", in: tracks) == 0)
+        #expect(PlayerEngine.resolveAudioTrackId("eng", in: tracks) == 1)
+        #expect(PlayerEngine.resolveAudioTrackId("rus", in: tracks) == 2)
+
+        // Title fragment
+        #expect(PlayerEngine.resolveAudioTrackId("Commentary", in: tracks) == 2)
+        #expect(PlayerEngine.resolveAudioTrackId("Dub", in: tracks) == 1)
+
+        // Stream index (e.g. from container / media server stream index)
+        #expect(PlayerEngine.resolveAudioTrackId("stream:3", in: tracks) == 2)
+        #expect(PlayerEngine.resolveAudioTrackId("s:2", in: tracks) == 1)
+
+        // Non-existent or empty
+        #expect(PlayerEngine.resolveAudioTrackId("fre", in: tracks) == nil)
+        #expect(PlayerEngine.resolveAudioTrackId("99", in: tracks) == nil)
+        #expect(PlayerEngine.resolveAudioTrackId("stream:99", in: tracks) == nil)
+        #expect(PlayerEngine.resolveAudioTrackId("", in: tracks) == nil)
+    }
+
+    @Test("Track resolver resolves subtitle tracks by id, language, title, and off/none/disabled")
+    func testResolveSubtitleTrack() {
+        let tracks = [
+            SubtitleTrack(id: 0, streamIndex: 3, title: "English Full", language: "eng"),
+            SubtitleTrack(id: 1, streamIndex: 4, title: "Russian Forced", language: "rus", isForced: true),
+            SubtitleTrack(id: 2, streamIndex: 5, title: "Japanese Signs & Songs", language: "jpn"),
+        ]
+
+        // Off / none / disabled / no
+        #expect(PlayerEngine.resolveSubtitleSelection("off", in: tracks) == .disable)
+        #expect(PlayerEngine.resolveSubtitleSelection("none", in: tracks) == .disable)
+        #expect(PlayerEngine.resolveSubtitleSelection("disabled", in: tracks) == .disable)
+        #expect(PlayerEngine.resolveSubtitleSelection("no", in: tracks) == .disable)
+
+        // Numerical ID
+        #expect(PlayerEngine.resolveSubtitleSelection("0", in: tracks) == .select(trackId: 0))
+        #expect(PlayerEngine.resolveSubtitleSelection("1", in: tracks) == .select(trackId: 1))
+
+        // Stream index (e.g. from container / media server stream index)
+        #expect(PlayerEngine.resolveSubtitleSelection("stream:4", in: tracks) == .select(trackId: 1))
+        #expect(PlayerEngine.resolveSubtitleSelection("s:5", in: tracks) == .select(trackId: 2))
+        // Direct streamIndex fallback when number exceeds track IDs
+        #expect(PlayerEngine.resolveSubtitleSelection("5", in: tracks) == .select(trackId: 2))
+
+        // Language code
+        #expect(PlayerEngine.resolveSubtitleSelection("rus", in: tracks) == .select(trackId: 1))
+        #expect(PlayerEngine.resolveSubtitleSelection("jpn", in: tracks) == .select(trackId: 2))
+
+        // Title fragment
+        #expect(PlayerEngine.resolveSubtitleSelection("Signs", in: tracks) == .select(trackId: 2))
+
+        // Short word false-positive protection (e.g. "ru" won't falsely substring-match arbitrary words if not a word)
+        #expect(PlayerEngine.resolveSubtitleSelection("ger", in: tracks) == nil)
+        #expect(PlayerEngine.resolveSubtitleSelection("99", in: tracks) == nil)
+        #expect(PlayerEngine.resolveSubtitleSelection("stream:99", in: tracks) == nil)
+        #expect(PlayerEngine.resolveSubtitleSelection("", in: tracks) == nil)
+    }
 }

@@ -55,7 +55,9 @@ controller.openStream(
     title: "Movie Title", // Optional; falls back to URL filename/host
     artworkURL: URL(string: "https://media.server/poster.jpg"), // Optional; displayed in Now Playing / Control Center
     headers: ["Authorization": "Bearer secret_token"],
-    startTime: 120.0 // Optional; overrides local resume history
+    startTime: 120.0,     // Optional; overrides local resume history
+    audioTrack: "jpn",    // Optional; track id, "stream:N" (container stream index), or language/title; overrides history
+    subtitleTrack: "eng"  // Optional; track id, "stream:N", language/title, or "off"/"none"; overrides history
 )
 
 // Open local media file (automatically extracts embedded cover art or accepts explicit artwork):

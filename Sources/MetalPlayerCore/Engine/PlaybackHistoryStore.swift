@@ -7,11 +7,26 @@ public struct PlaybackRecord: Codable, Sendable, Equatable {
     public let position: Double
     public let duration: Double
     public let lastUpdated: Date
+    /// Selected audio track id (`nil` if unknown / not recorded).
+    public let audioTrackId: Int?
+    /// Selected subtitle track id. `nil` means no recorded preference; `PlaybackRecord.subtitlesOff` means disabled.
+    public let subtitleTrackId: Int?
 
-    public init(position: Double, duration: Double, lastUpdated: Date = Date()) {
+    /// Sentinel value for `subtitleTrackId` meaning the user explicitly disabled subtitles.
+    public static let subtitlesOff = -1
+
+    public init(
+        position: Double,
+        duration: Double,
+        lastUpdated: Date = Date(),
+        audioTrackId: Int? = nil,
+        subtitleTrackId: Int? = nil
+    ) {
         self.position = position
         self.duration = duration
         self.lastUpdated = lastUpdated
+        self.audioTrackId = audioTrackId
+        self.subtitleTrackId = subtitleTrackId
     }
 }
 
@@ -49,20 +64,17 @@ public final class PlaybackHistoryStore: Sendable {
     }
 
     /// Saves the current playback position for a media resource, respecting start and end thresholds.
+    /// If an existing record exists, it preserves previously selected audio/subtitle tracks unless explicitly passed.
     public func savePosition(
         for path: String,
         position: Double,
         duration: Double,
         startThreshold: Double = 15.0,
-        endThresholdRatio: Double = 0.95
+        endThresholdRatio: Double = 0.95,
+        audioTrackId: Int? = nil,
+        subtitleTrackId: Int? = nil
     ) {
         guard duration > 0 else { return }
-
-        // If watched for less than start threshold, treat as unwatched (clear)
-        if position < startThreshold {
-            clearPosition(for: path)
-            return
-        }
 
         // If watched past end threshold (e.g. credits at 95% or last 30s), mark as finished (clear)
         let endThresholdSeconds = duration * endThresholdRatio
@@ -71,10 +83,72 @@ public final class PlaybackHistoryStore: Sendable {
             return
         }
 
-        let record = PlaybackRecord(position: position, duration: duration, lastUpdated: Date())
         let key = storageKey(for: path)
 
         lock.withLock {
+            let existingRecord: PlaybackRecord? = {
+                guard let data = userDefaults.data(forKey: key),
+                    let rec = try? JSONDecoder().decode(PlaybackRecord.self, from: data)
+                else { return nil }
+                return rec
+            }()
+
+            // If watched for less than start threshold, treat playback position as 0 / unwatched,
+            // but preserve any selected audio/subtitle track preferences if available.
+            let effectivePosition: Double = position < startThreshold ? 0.0 : position
+            let effectiveAudio = audioTrackId ?? existingRecord?.audioTrackId
+            let effectiveSubtitle = subtitleTrackId ?? existingRecord?.subtitleTrackId
+
+            // If position is under threshold and no tracks are configured, clear record completely.
+            if effectivePosition == 0.0 && effectiveAudio == nil && effectiveSubtitle == nil {
+                userDefaults.removeObject(forKey: key)
+                return
+            }
+
+            let record = PlaybackRecord(
+                position: effectivePosition,
+                duration: duration,
+                lastUpdated: Date(),
+                audioTrackId: effectiveAudio,
+                subtitleTrackId: effectiveSubtitle
+            )
+
+            if let encoded = try? JSONEncoder().encode(record) {
+                userDefaults.set(encoded, forKey: key)
+            }
+            pruneExcessRecordsIfNeeded()
+        }
+    }
+
+    /// Explicitly updates or saves user track selection preferences for a media resource
+    /// regardless of current playback position.
+    public func saveTrackSelection(
+        for path: String,
+        duration: Double,
+        audioTrackId: Int?,
+        subtitleTrackId: Int?
+    ) {
+        let key = storageKey(for: path)
+
+        lock.withLock {
+            let existingRecord: PlaybackRecord? = {
+                guard let data = userDefaults.data(forKey: key),
+                    let rec = try? JSONDecoder().decode(PlaybackRecord.self, from: data)
+                else { return nil }
+                return rec
+            }()
+
+            let position = existingRecord?.position ?? 0.0
+            let effectiveDuration = duration > 0 ? duration : (existingRecord?.duration ?? 0.0)
+
+            let record = PlaybackRecord(
+                position: position,
+                duration: effectiveDuration,
+                lastUpdated: Date(),
+                audioTrackId: audioTrackId ?? existingRecord?.audioTrackId,
+                subtitleTrackId: subtitleTrackId ?? existingRecord?.subtitleTrackId
+            )
+
             if let encoded = try? JSONEncoder().encode(record) {
                 userDefaults.set(encoded, forKey: key)
             }
@@ -88,6 +162,28 @@ public final class PlaybackHistoryStore: Sendable {
         startThreshold: Double = 15.0,
         endThresholdRatio: Double = 0.95
     ) -> Double? {
+        savedRecord(for: path, startThreshold: startThreshold, endThresholdRatio: endThresholdRatio)?.position
+    }
+
+    /// Retrieves the saved audio / subtitle track selection for a media resource if present.
+    /// Does not require playback position to be past `startThreshold`.
+    public func savedTrackSelection(
+        for path: String
+    ) -> (audioTrackId: Int?, subtitleTrackId: Int?)? {
+        let key = storageKey(for: path)
+        return lock.withLock {
+            guard let data = userDefaults.data(forKey: key),
+                let record = try? JSONDecoder().decode(PlaybackRecord.self, from: data)
+            else { return nil }
+            return (record.audioTrackId, record.subtitleTrackId)
+        }
+    }
+
+    private func savedRecord(
+        for path: String,
+        startThreshold: Double,
+        endThresholdRatio: Double
+    ) -> PlaybackRecord? {
         let key = storageKey(for: path)
 
         return lock.withLock {
@@ -105,7 +201,7 @@ public final class PlaybackHistoryStore: Sendable {
                 return nil
             }
 
-            return record.position
+            return record
         }
     }
 
