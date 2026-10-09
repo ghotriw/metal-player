@@ -50,7 +50,10 @@ struct MediaDemuxerColorTests {
         // Test conversion to HVCC format (4-byte big-endian length prefix)
         let (hvccData, count) = streamData.withUnsafeBytes { raw in
             MediaDemuxer.packetDataToHVCC(
-                pktData: raw.baseAddress!.assumingMemoryBound(to: UInt8.self), count: streamData.count)
+                pktData: raw.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                count: streamData.count,
+                isAnnexBStream: true
+            )
         }
         #expect(count > 0)
         #expect(hvccData.count == count)
@@ -213,5 +216,30 @@ struct MediaDemuxerColorTests {
         let demuxer = MediaDemuxer(url: referencePath, headers: headers)
         #expect(demuxer != nil)
         #expect(demuxer?.width == 3840)
+    }
+
+    @Test("extractNALUnits handles 4-byte length prefix starting with 00 00 01 without false Annex B detection")
+    func testNALExtractionWithLengthPrefixedStreamAndLargeSize() {
+        // NAL of size 65538 (0x00 0x01 0x00 0x02)
+        // If length prefix starts with 00 00 01 02, previous heuristic misinterpreted it as Annex B start code!
+        let nalPayload = Array(repeating: UInt8(0x42), count: 65538)
+        var packetData = Data([0x00, 0x01, 0x00, 0x02])
+        packetData.append(contentsOf: nalPayload)
+
+        // With isAnnexB = false (standard MP4/MKV stream)
+        let nalus = MediaDemuxer.extractNALUnits(from: packetData, isAnnexB: false)
+        #expect(nalus.count == 1)
+        #expect(nalus[0].count == 65538)
+
+        // packetDataToHVCC with isAnnexBStream = false must not corrupt packet
+        let (hvccData, count) = packetData.withUnsafeBytes { raw in
+            MediaDemuxer.packetDataToHVCC(
+                pktData: raw.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                count: packetData.count,
+                isAnnexBStream: false
+            )
+        }
+        #expect(count == packetData.count)
+        #expect(hvccData == packetData)
     }
 }

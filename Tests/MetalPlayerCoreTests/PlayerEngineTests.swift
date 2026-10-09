@@ -3,6 +3,7 @@ import AppKit
 import CoreMedia
 import Foundation
 import Testing
+import os
 
 @testable import MetalPlayerCore
 
@@ -40,14 +41,21 @@ struct PlayerEngineTests {
 
         // Default: isHDRDisplay = true, auto -> .system
         engine.isHDRDisplay = true
+        engine.isHDRContent = true
         engine.renderMode = .auto
         #expect(engine.activeRenderMode == .system)
         #expect(engine.isMetalLayerVisible == false)
 
-        // On SDR display, auto -> .metalToneMap
+        // On SDR display with HDR content, auto -> .metalToneMap
         engine.isHDRDisplay = false
         #expect(engine.activeRenderMode == .metalToneMap)
         #expect(engine.isMetalLayerVisible == true)
+
+        // On SDR display with SDR content, auto -> .system
+        engine.isHDRContent = false
+        #expect(engine.activeRenderMode == .system)
+        #expect(engine.isMetalLayerVisible == false)
+        engine.isHDRContent = true
 
         // Explicit system mode
         engine.renderMode = .system

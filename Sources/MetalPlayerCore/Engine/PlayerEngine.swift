@@ -37,6 +37,13 @@ public final class PlayerEngine: PlayerEngineProtocol {
     public var artworkURL: URL? = nil
     public var videoWidth: Int = 0
     public var videoHeight: Int = 0
+    public var isHDRContent: Bool = false {
+        didSet {
+            if oldValue != isHDRContent {
+                updateEffectiveRenderMode()
+            }
+        }
+    }
     public var renderMode: RenderMode = .auto {
         didSet {
             updateEffectiveRenderMode()
@@ -56,7 +63,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
             }
         }
     }
-    private let activeRenderModeLock = OSAllocatedUnfairLock(initialState: RenderMode.metalToneMap)
+    private let activeRenderModeLock = OSAllocatedUnfairLock(initialState: RenderMode.system)
     nonisolated public var activeRenderMode: RenderMode {
         activeRenderModeLock.withLock { $0 }
     }
@@ -248,19 +255,6 @@ public final class PlayerEngine: PlayerEngineProtocol {
         audioRenderer.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
         displayLayer.videoGravity = .resizeAspect
 
-        // Configure displayLayer with independent host timebase matching KSPlayer
-        var controlTimebase: CMTimebase?
-        CMTimebaseCreateWithSourceClock(
-            allocator: kCFAllocatorDefault,
-            sourceClock: CMClockGetHostTimeClock(),
-            timebaseOut: &controlTimebase
-        )
-        if let controlTimebase {
-            displayLayer.controlTimebase = controlTimebase
-            CMTimebaseSetTime(controlTimebase, time: .zero)
-            CMTimebaseSetRate(controlTimebase, rate: 1.0)
-        }
-
         let queue = self.frameQueue
         decoder.setOutputHandler { frame in
             queue.push(frame)
@@ -369,7 +363,12 @@ public final class PlayerEngine: PlayerEngineProtocol {
         let newMode: RenderMode
         switch renderMode {
         case .auto:
-            newMode = (isHDRDisplay || !isToneMappingPermitted) ? .system : .metalToneMap
+            // Metal tone mapping is ONLY needed when video content is HDR and display is SDR
+            if isHDRContent && !isHDRDisplay && isToneMappingPermitted {
+                newMode = .metalToneMap
+            } else {
+                newMode = .system
+            }
         case .system:
             newMode = .system
         case .metalToneMap:
@@ -770,6 +769,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.duration = demuxer.durationSeconds
         self.videoWidth = demuxer.width
         self.videoHeight = demuxer.height
+        self.isHDRContent = demuxer.isHDR
         if self.mediaTitle.isEmpty {
             self.mediaTitle = Self.resolveTitle(from: path)
         }

@@ -256,10 +256,12 @@ public final class FFAudioDecoder: @unchecked Sendable {
                 ptsSeconds = 0
             }
             let cmPts = CMTime(seconds: ptsSeconds, preferredTimescale: targetSampleRate)
-            let cmDuration = CMTime(value: CMTimeValue(convertedSamples), timescale: targetSampleRate)
+            // In CoreMedia for audio buffers with sampleCount > 1, the duration in CMSampleTimingInfo
+            // represents the duration of a SINGLE sample (1 / sampleRate), NOT the whole buffer!
+            let singleSampleDuration = CMTime(value: 1, timescale: targetSampleRate)
 
             var timing = CMSampleTimingInfo(
-                duration: cmDuration,
+                duration: singleSampleDuration,
                 presentationTimeStamp: cmPts,
                 decodeTimeStamp: .invalid
             )

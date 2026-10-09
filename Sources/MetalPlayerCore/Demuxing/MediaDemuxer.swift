@@ -330,6 +330,19 @@ public final class MediaDemuxer: @unchecked Sendable {
     public private(set) var isFullRange: Bool = false
     public private(set) var bitDepth: Int = 8
     public private(set) var isDolbyVisionProfile5: Bool = false
+    public private(set) var isAnnexBStream: Bool = false
+    public var isHDR: Bool {
+        if isDolbyVisionProfile5 { return true }
+        if transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
+            || transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG
+        {
+            return true
+        }
+        if colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_2020 && bitDepth >= 10 {
+            return true
+        }
+        return false
+    }
     private var masteringDisplay: Data?
     private var contentLightLevel: Data?
 
@@ -447,8 +460,11 @@ public final class MediaDemuxer: @unchecked Sendable {
         for i in 0..<Int(formatCtx.pointee.nb_streams) {
             let stream = formatCtx.pointee.streams[i]!
             let codecId = stream.pointee.codecpar.pointee.codec_id
+            let isAttachedPic = (stream.pointee.disposition & AV_DISPOSITION_ATTACHED_PIC) != 0
             if stream.pointee.codecpar.pointee.codec_type == AVMEDIA_TYPE_VIDEO
+                && !isAttachedPic
                 && (codecId == AV_CODEC_ID_HEVC || codecId == AV_CODEC_ID_H264)
+                && self.videoStreamIndex < 0
             {
                 self.videoStreamIndex = i
                 self.timebase = stream.pointee.time_base
@@ -676,6 +692,7 @@ public final class MediaDemuxer: @unchecked Sendable {
 
         // Case 1: Raw Annex B in extradata (starts with 0x00 0x00 0x01 or 0x00 0x00 0x00 0x01)
         if size >= 3 && data[0] == 0 && data[1] == 0 && (data[2] == 1 || (size > 3 && data[2] == 0 && data[3] == 1)) {
+            self.isAnnexBStream = true
             let nalus = Self.extractNALUnits(from: data)
             var vps: Data?
             var sps: Data?
@@ -700,6 +717,7 @@ public final class MediaDemuxer: @unchecked Sendable {
 
         // Case 2: H.264 avcC format (ISO/IEC 14496-15)
         if codec == .h264 && size >= 7 && data[0] == 1 {
+            self.isAnnexBStream = false
             var offset = 5
             let numSPS = Int(data[offset] & 0x1F)
             offset += 1
@@ -731,6 +749,7 @@ public final class MediaDemuxer: @unchecked Sendable {
 
         // Case 3: HEVC hvcC format (ISO/IEC 14496-15)
         if codec == .hevc && size >= 23 && data[0] == 1 {
+            self.isAnnexBStream = false
             var vps: Data?
             var sps: Data?
             var pps: Data?
@@ -791,7 +810,15 @@ public final class MediaDemuxer: @unchecked Sendable {
             packetsScanned += 1
             if pkt.stream_index == videoStreamIndex {
                 let data = Data(bytes: pkt.data, count: Int(pkt.size))
-                let nalus = Self.extractNALUnits(from: data)
+                // If extradata was missing or empty, detect whether the stream is Annex B from the first video packet
+                if !hasExtradataParams && packetsScanned == 1 && data.count >= 3 {
+                    if data[0] == 0 && data[1] == 0
+                        && (data[2] == 1 || (data.count > 3 && data[2] == 0 && data[3] == 1))
+                    {
+                        self.isAnnexBStream = true
+                    }
+                }
+                let nalus = Self.extractNALUnits(from: data, isAnnexB: self.isAnnexBStream)
                 for naluData in nalus {
                     guard !naluData.isEmpty else { continue }
                     if codec == .hevc {
@@ -970,7 +997,11 @@ public final class MediaDemuxer: @unchecked Sendable {
         guard let formatDesc = formatDescription else { return nil }
 
         let (hvccData, hvccSize) = rawData.withUnsafeBytes { raw in
-            Self.packetDataToHVCC(pktData: raw.baseAddress!.assumingMemoryBound(to: UInt8.self), count: rawData.count)
+            Self.packetDataToHVCC(
+                pktData: raw.baseAddress!.assumingMemoryBound(to: UInt8.self),
+                count: rawData.count,
+                isAnnexBStream: self.isAnnexBStream
+            )
         }
         guard hvccSize > 0, let mem = malloc(hvccSize) else {
             return nil
@@ -1204,17 +1235,22 @@ public final class MediaDemuxer: @unchecked Sendable {
 
     /// Parses NAL units from either Annex B byte stream (0x000001 or 0x00000001 start codes)
     /// or MP4/hvcC format (4-byte big endian length prefixed).
-    static func extractNALUnits(from data: Data) -> [Data] {
+    static func extractNALUnits(from data: Data, isAnnexB: Bool? = nil) -> [Data] {
         guard data.count >= 4 else { return [] }
 
         let bytes = [UInt8](data)
         let count = bytes.count
 
-        // Check if stream begins with an Annex B start code (0x00 0x00 0x01 or 0x00 0x00 0x00 0x01)
-        let isAnnexB =
-            (bytes[0] == 0 && bytes[1] == 0 && (bytes[2] == 1 || (count > 3 && bytes[2] == 0 && bytes[3] == 1)))
+        // If format is explicitly known, use it; otherwise inspect start code
+        let annexB: Bool
+        if let isAnnexB {
+            annexB = isAnnexB
+        } else {
+            annexB =
+                (bytes[0] == 0 && bytes[1] == 0 && (bytes[2] == 1 || (count > 3 && bytes[2] == 0 && bytes[3] == 1)))
+        }
 
-        if isAnnexB {
+        if annexB {
             var nalus: [Data] = []
             var starts: [(offset: Int, prefixLen: Int)] = []
 
@@ -1261,14 +1297,26 @@ public final class MediaDemuxer: @unchecked Sendable {
 
     /// Converts an input packet to HVCC format expected by VideoToolbox (4-byte length prefix).
     /// If packet is already in length-prefixed format, it returns the raw packet bytes directly.
-    static func packetDataToHVCC(pktData: UnsafePointer<UInt8>?, count: Int) -> (Data, Int) {
+    static func packetDataToHVCC(pktData: UnsafePointer<UInt8>?, count: Int, isAnnexBStream: Bool = false) -> (
+        Data, Int
+    ) {
         guard let pktData, count >= 4 else {
             return (Data(), 0)
         }
 
-        let isAnnexB =
-            (pktData[0] == 0 && pktData[1] == 0
-                && (pktData[2] == 1 || (count > 3 && pktData[2] == 0 && pktData[3] == 1)))
+        // Only treat as Annex B if either the stream is known to be Annex B,
+        // or the packet starts with Annex B and cannot be a 4-byte length prefix.
+        let isAnnexB: Bool
+        if isAnnexBStream {
+            isAnnexB =
+                (pktData[0] == 0 && pktData[1] == 0
+                    && (pktData[2] == 1 || (count > 3 && pktData[2] == 0 && pktData[3] == 1)))
+        } else {
+            // For container streams (MP4/MKV), packets are length-prefixed (avcC/hvcC format).
+            // A packet starting with 0x00 0x00 0x01 ... has a 4-byte length between 65536 and 131071.
+            // Do NOT re-parse as Annex B unless the stream format is Annex B!
+            isAnnexB = false
+        }
 
         if !isAnnexB {
             let data = Data(bytes: pktData, count: count)
