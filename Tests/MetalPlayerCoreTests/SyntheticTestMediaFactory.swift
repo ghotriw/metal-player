@@ -15,6 +15,9 @@ public enum SyntheticTestMediaFactory {
         case uhdHDRSubtitles
         /// H.264 video with AC3 5.1 (fltp), DTS 5.1 and 16-bit FLAC 5.1 (s16) audio tracks (10 seconds)
         case exoticAudioTracks
+        /// Audio codec/layout matrix with a distinct tone per channel (6 seconds): E-AC3 5.1, Opus 5.1, AAC 7.1,
+        /// MP3 44.1kHz stereo, AC3 44.1kHz stereo (resampling), TrueHD 5.1, PCM 24-bit 5.1
+        case audioCodecMatrix
 
         public var filename: String {
             switch self {
@@ -24,6 +27,8 @@ public enum SyntheticTestMediaFactory {
                 return "synth_audio_flac_51.flac"
             case .hevc10BitHDR:
                 return "synth_hevc_10bit_hdr.mp4"
+            case .audioCodecMatrix:
+                return "synth_audio_codec_matrix.mkv"
             case .exoticAudioTracks:
                 return "synth_exotic_audio_tracks.mkv"
             case .uhdHDRSubtitles:
@@ -94,7 +99,8 @@ public enum SyntheticTestMediaFactory {
         process.executableURL = URL(fileURLWithPath: ffmpeg)
         process.arguments = arguments
         process.standardOutput = Pipe()
-        process.standardError = Pipe()
+        let errPipe = Pipe()
+        process.standardError = errPipe
 
         do {
             try process.run()
@@ -102,7 +108,10 @@ public enum SyntheticTestMediaFactory {
             if process.terminationStatus == 0 && FileManager.default.fileExists(atPath: targetPath) {
                 return targetPath
             } else {
-                print("[SyntheticTestMediaFactory] FFmpeg failed with exit code \(process.terminationStatus)")
+                let errText = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+                print(
+                    "[SyntheticTestMediaFactory] FFmpeg failed with exit code \(process.terminationStatus): \(errText.split(separator: "\n").filter { $0.contains("rror") || $0.contains("nvalid") || $0.contains("not ") || $0.contains("Unable") }.joined(separator: " | "))"
+                )
                 return nil
             }
         } catch {
@@ -142,6 +151,9 @@ public enum SyntheticTestMediaFactory {
                 "-c:a", "flac",
                 outputPath,
             ]
+
+        case .audioCodecMatrix:
+            return audioCodecMatrixArguments(outputPath: outputPath)
 
         case .exoticAudioTracks:
             return [
@@ -201,5 +213,75 @@ public enum SyntheticTestMediaFactory {
                 outputPath,
             ]
         }
+    }
+
+    // MARK: - Audio codec matrix
+
+    /// One entry of the codec matrix: encoder + layout + per-channel tone generation.
+    struct AudioMatrixTrack: Sendable {
+        let name: String
+        let channels: Int
+        let layout: String
+        let sampleRate: Int
+        let encoderArgs: [String]
+    }
+
+    static let audioMatrixTracks: [AudioMatrixTrack] = [
+        .init(
+            name: "eac3_51", channels: 6, layout: "5.1", sampleRate: 48000,
+            encoderArgs: ["-c:a", "eac3", "-b:a", "448k"]),
+        .init(
+            name: "opus_51", channels: 6, layout: "5.1", sampleRate: 48000,
+            encoderArgs: ["-c:a", "libopus", "-b:a", "384k", "-mapping_family", "1"]),
+        .init(
+            name: "aac_71", channels: 8, layout: "7.1", sampleRate: 48000, encoderArgs: ["-c:a", "aac", "-b:a", "512k"]),
+        .init(
+            name: "mp3_441_stereo", channels: 2, layout: "stereo", sampleRate: 44100,
+            encoderArgs: ["-c:a", "libmp3lame", "-b:a", "192k"]),
+        .init(
+            name: "ac3_441_stereo", channels: 2, layout: "stereo", sampleRate: 44100,
+            encoderArgs: ["-c:a", "ac3", "-b:a", "192k"]),
+        .init(
+            name: "truehd_51", channels: 6, layout: "5.1", sampleRate: 48000,
+            encoderArgs: ["-c:a", "truehd", "-strict", "-2"]),
+        .init(name: "pcm24_51", channels: 6, layout: "5.1", sampleRate: 48000, encoderArgs: ["-c:a", "pcm_s24le"]),
+    ]
+
+    private static func audioCodecMatrixArguments(outputPath: String) -> [String] {
+        var args: [String] = ["-y", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=24:duration=6"]
+        var filters: [String] = []
+        var nextInput = 1  // input 0 is the video
+        for (t, track) in audioMatrixTracks.enumerated() {
+            // Distinct tone per channel so channel swaps/mixups are detectable (LFE gets 60 Hz: codecs low-pass it).
+            var inputs = ""
+            for c in 0..<track.channels {
+                args += [
+                    "-f", "lavfi", "-i",
+                    "sine=frequency=\(track.channels >= 6 && c == 3 ? 60 : 300 + 130 * c):sample_rate=\(track.sampleRate):duration=6",
+                ]
+                inputs += "[\(nextInput):a]"
+                nextInput += 1
+            }
+            let map = (0..<track.channels).map(String.init).joined(separator: "|")
+            filters.append("\(inputs)amerge=inputs=\(track.channels),channelmap=\(map):\(track.layout)[a\(t)]")
+        }
+        args += ["-filter_complex", filters.joined(separator: ";"), "-map", "0:v"]
+        for t in 0..<audioMatrixTracks.count { args += ["-map", "[a\(t)]"] }
+        args += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-g", "24"]
+        for (t, track) in audioMatrixTracks.enumerated() {
+            // Option names (starting with '-') need a per-stream specifier.
+            for a in track.encoderArgs {
+                if !(a.hasPrefix("-") && (a.dropFirst().first?.isLetter ?? false)) {
+                    args.append(a)
+                } else if a.hasSuffix(":a") {
+                    args.append("\(a):\(t)")
+                } else {
+                    args.append("\(a):a:\(t)")
+                }
+            }
+            args += ["-metadata:s:a:\(t)", "title=\(track.name)"]
+        }
+        args.append(outputPath)
+        return args
     }
 }
