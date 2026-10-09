@@ -84,6 +84,17 @@ controller.onClose = {
 }
 ```
 
+### Logging
+
+Player logs go through `AppLog`, which writes to `os.Logger` and to `~/Library/Application Support/MetalPlayer/player.log`. A host app can use it too:
+
+```swift
+AppLog.info(.host, "Session started")
+LogViewerWindowController.shared.show() // or ⌥⌘L
+```
+
+Details: [docs/LOGGING.md](docs/LOGGING.md).
+
 ### Low-level Rendering Engine (`MetalPlayerCore`)
 
 ```swift

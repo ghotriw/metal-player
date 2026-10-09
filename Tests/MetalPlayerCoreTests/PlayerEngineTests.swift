@@ -193,6 +193,13 @@ struct PlayerEngineTests {
         // Stop resets to idle
         engine.stop()
         #expect(engine.playbackState == .idle)
+
+        // Stopping active playback directly transitions to .idle without .paused
+        engine.playbackState = .playing
+        statesReceived.removeAll()
+        engine.stop()
+        #expect(engine.playbackState == .idle)
+        #expect(statesReceived == [.idle])
     }
 
     @Test("Engine cancellation resets to idle instead of failed")

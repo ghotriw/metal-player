@@ -20,6 +20,9 @@ public final class LogViewModel {
     }
     public var autoScroll: Bool = true
     public var logFilePath: String = ""
+    public var availableCategories: [LogCategory] = []
+
+    private var knownCategoriesSet: Set<LogCategory> = Set(LogCategory.allBuiltin)
 
     private let store: LogStore
     @ObservationIgnored
@@ -29,6 +32,11 @@ public final class LogViewModel {
         self.store = store
         self.entries = store.snapshot()
         self.logFilePath = store.currentLogFileURL?.path ?? ""
+
+        for entry in self.entries {
+            self.knownCategoriesSet.insert(entry.category)
+        }
+        self.availableCategories = self.knownCategoriesSet.sorted { $0.rawValue < $1.rawValue }
         recomputeFiltered()
 
         self.listenerId = store.addListener { [weak self] newEntry in
@@ -38,6 +46,12 @@ public final class LogViewModel {
                 if self.entries.count > self.store.maxCapacity {
                     self.entries.removeFirst(self.entries.count - self.store.maxCapacity)
                 }
+
+                // Check if a new custom category arrived
+                if self.knownCategoriesSet.insert(newEntry.category).inserted {
+                    self.availableCategories = self.knownCategoriesSet.sorted { $0.rawValue < $1.rawValue }
+                }
+
                 // Incremental addition to filtered entries
                 if self.matchesFilter(newEntry) {
                     self.filteredEntries.append(newEntry)
@@ -137,7 +151,7 @@ public struct LogViewerView: View {
             // Category filter
             Picker("Category", selection: $viewModel.selectedCategory) {
                 Text("All Categories").tag(LogCategory?.none)
-                ForEach(LogCategory.allCases, id: \.self) { cat in
+                ForEach(viewModel.availableCategories, id: \.self) { cat in
                     Text(cat.rawValue).tag(LogCategory?.some(cat))
                 }
             }

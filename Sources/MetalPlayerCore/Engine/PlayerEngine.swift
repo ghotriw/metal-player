@@ -773,7 +773,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         currentInterruptContext = nil
         demuxer?.cancel()
         demuxer = nil
-        pause()
+        stopPlaybackPipeline()
         clearVideoSurface()
         mediaTitle = ""
         artworkData = nil

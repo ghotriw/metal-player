@@ -34,17 +34,45 @@ public enum LogLevel: String, Sendable, Codable, CaseIterable, Comparable {
     }
 }
 
-/// Known logging categories for MetalPlayer subsystems.
-public enum LogCategory: String, Sendable, Codable, CaseIterable {
-    case general = "General"
-    case engine = "Engine"
-    case demuxer = "Demuxer"
-    case audio = "Audio"
-    case video = "Video"
-    case renderer = "Renderer"
-    case subtitles = "Subtitles"
-    case ui = "UI"
-    case performance = "Performance"
+/// Logging category for MetalPlayer subsystems and integrating host applications.
+/// Supports both built-in player subsystems and custom application categories (e.g. Host, Emby, Network).
+public struct LogCategory: RawRepresentable, Hashable, Sendable, Codable, ExpressibleByStringLiteral,
+    CustomStringConvertible
+{
+    public let rawValue: String
+
+    public init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    public init(_ name: String) {
+        self.rawValue = name
+    }
+
+    public init(stringLiteral value: String) {
+        self.rawValue = value
+    }
+
+    public var description: String {
+        rawValue
+    }
+
+    // Built-in presets:
+    public static let general = LogCategory("General")
+    public static let engine = LogCategory("Engine")
+    public static let demuxer = LogCategory("Demuxer")
+    public static let audio = LogCategory("Audio")
+    public static let video = LogCategory("Video")
+    public static let renderer = LogCategory("Renderer")
+    public static let subtitles = LogCategory("Subtitles")
+    public static let ui = LogCategory("UI")
+    public static let performance = LogCategory("Performance")
+    /// Dedicated category for integrating host applications (such as EmbyPlayer, CLI tools, etc.)
+    public static let host = LogCategory("Host")
+
+    public static let allBuiltin: [LogCategory] = [
+        .general, .engine, .demuxer, .audio, .video, .renderer, .subtitles, .ui, .performance, .host,
+    ]
 }
 
 /// A structured entry representing an isolated log message.
@@ -229,6 +257,7 @@ public enum AppLog {
         .subtitles: os.Logger(subsystem: subsystem, category: LogCategory.subtitles.rawValue),
         .ui: os.Logger(subsystem: subsystem, category: LogCategory.ui.rawValue),
         .performance: os.Logger(subsystem: subsystem, category: LogCategory.performance.rawValue),
+        .host: os.Logger(subsystem: subsystem, category: LogCategory.host.rawValue),
     ]
 
     public static func log(

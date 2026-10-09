@@ -3,7 +3,7 @@ import Testing
 
 @testable import MetalPlayerCore
 
-@Suite("AppLog & LogStore Tests")
+@Suite("AppLog & LogStore Tests", .serialized)
 struct LoggingTests {
     @Test("LogStore correctly appends entries and adheres to capacity limit")
     func testLogStoreCapacity() {
@@ -110,5 +110,35 @@ struct LoggingTests {
 
         let snapshot = store.snapshot()
         #expect(snapshot.count == 500)
+    }
+
+    @Test("AppLog supports string literals, host preset and custom LogCategory")
+    func testDynamicLogCategory() {
+        let previousLevel = AppLog.minimumLogLevel
+        AppLog.minimumLogLevel = .debug
+        defer { AppLog.minimumLogLevel = previousLevel }
+
+        let customCategory: LogCategory = "CustomExtension"
+        let marker1 = "CustomMsg-\(UUID().uuidString)"
+        let marker2 = "LiteralMsg-\(UUID().uuidString)"
+        let marker3 = "HostMsg-\(UUID().uuidString)"
+
+        AppLog.info(customCategory, marker1)
+        AppLog.info("DirectStringLiteral", marker2)
+        AppLog.info(.host, marker3)
+
+        let snapshot = LogStore.shared.snapshot()
+        let entry1 = snapshot.first(where: { $0.message.contains(marker1) })
+        let entry2 = snapshot.first(where: { $0.message.contains(marker2) })
+        let entry3 = snapshot.first(where: { $0.message.contains(marker3) })
+
+        #expect(entry1?.category == customCategory)
+        #expect(entry1?.category.rawValue == "CustomExtension")
+
+        #expect(entry2?.category == "DirectStringLiteral")
+        #expect(entry2?.category.rawValue == "DirectStringLiteral")
+
+        #expect(entry3?.category == .host)
+        #expect(entry3?.category.rawValue == "Host")
     }
 }
