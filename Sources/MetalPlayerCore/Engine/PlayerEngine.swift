@@ -35,6 +35,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
     public var mediaTitle: String = ""
     public var artworkData: Data? = nil
     public var artworkURL: URL? = nil
+    public var hasVideo: Bool = false
     public var videoWidth: Int = 0
     public var videoHeight: Int = 0
     public var isHDRContent: Bool = false {
@@ -502,6 +503,13 @@ public final class PlayerEngine: PlayerEngineProtocol {
         }
     }
 
+    /// Completely flushes and clears the video display layer and Metal canvas, removing any lingering video frame.
+    public func clearVideoSurface() {
+        frameQueue.clear(resetDroppedFrames: true)
+        sampleBufferRenderer.flush(removingDisplayedImage: true) {}
+        metalRenderer?.clear()
+    }
+
     /// Resolves the user-facing media title from a file/stream path, falling back to
     /// URL host or file name if no explicit title is provided.
     nonisolated public static func resolveTitle(from path: String, explicitTitle: String? = nil) -> String {
@@ -647,6 +655,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         isFeeding.withLock { $0 = false }
         stopFeedingVideo()
         stopFeedingAudio()
+        clearVideoSurface()
         displayLink?.isPaused = true
         synchronizer.setRate(0.0, time: synchronizer.currentTime())
         isPlaying = false
@@ -715,6 +724,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         isFeeding.withLock { $0 = false }
         stopFeedingVideo()
         stopFeedingAudio()
+        clearVideoSurface()
         displayLink?.isPaused = true
         synchronizer.setRate(0.0, time: synchronizer.currentTime())
         isPlaying = false
@@ -743,9 +753,13 @@ public final class PlayerEngine: PlayerEngineProtocol {
         demuxer?.cancel()
         demuxer = nil
         pause()
+        clearVideoSurface()
         mediaTitle = ""
         artworkData = nil
         artworkURL = nil
+        isLoaded = false
+        currentTime = 0
+        duration = 0
         playbackState = .idle
     }
 
@@ -766,6 +780,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.demuxer = demuxer
         self.currentPath = path
         self.currentHeaders = headers
+        self.hasVideo = demuxer.hasVideo
         self.duration = demuxer.durationSeconds
         self.videoWidth = demuxer.width
         self.videoHeight = demuxer.height
@@ -789,68 +804,70 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.isLoaded = true
         self.loadError = nil
 
-        self.metalRenderer?.updateUniforms { uniforms in
-            uniforms.sourcePeakNits = demuxer.maxPeakNits
-            if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
-                uniforms.colorPrimaries = 1
-            } else if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3
-                || demuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65
-            {
-                uniforms.colorPrimaries = 2
-            } else {
-                uniforms.colorPrimaries = 0  // BT.2020
+        if demuxer.hasVideo {
+            self.metalRenderer?.updateUniforms { uniforms in
+                uniforms.sourcePeakNits = demuxer.maxPeakNits
+                if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
+                    uniforms.colorPrimaries = 1
+                } else if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3
+                    || demuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65
+                {
+                    uniforms.colorPrimaries = 2
+                } else {
+                    uniforms.colorPrimaries = 0  // BT.2020
+                }
+
+                if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2
+                    || demuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma
+                {
+                    uniforms.transferFunction = 2  // SDR
+                } else if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
+                    uniforms.transferFunction = 1  // HLG
+                } else {
+                    uniforms.transferFunction = 0  // PQ
+                }
+
+                uniforms.bitDepth = UInt32(demuxer.bitDepth)
+                uniforms.isFullRange = demuxer.isFullRange ? 1 : 0
+                if demuxer.isDolbyVisionProfile5 {
+                    uniforms.colorSpaceMode = 2  // Dolby Vision IPT / ICtCp
+                } else if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
+                    uniforms.colorSpaceMode = 1  // BT.709
+                } else {
+                    uniforms.colorSpaceMode = 0  // Standard BT.2020 YCbCr
+                }
             }
 
-            if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2
-                || demuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma
-            {
-                uniforms.transferFunction = 2  // SDR
-            } else if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG {
-                uniforms.transferFunction = 1  // HLG
-            } else {
-                uniforms.transferFunction = 0  // PQ
-            }
-
-            uniforms.bitDepth = UInt32(demuxer.bitDepth)
-            uniforms.isFullRange = demuxer.isFullRange ? 1 : 0
-            if demuxer.isDolbyVisionProfile5 {
-                uniforms.colorSpaceMode = 2  // Dolby Vision IPT / ICtCp
-            } else if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
-                uniforms.colorSpaceMode = 1  // BT.709
-            } else {
-                uniforms.colorSpaceMode = 0  // Standard BT.2020 YCbCr
-            }
+            // Update telemetry metadata
+            let primariesStr: String = {
+                if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 { return "BT.709" }
+                if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3
+                    || demuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65
+                {
+                    return "DCI-P3"
+                }
+                return "BT.2020"
+            }()
+            let transferStr: String = {
+                if demuxer.isDolbyVisionProfile5 { return "Dolby Vision (ICtCp)" }
+                if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2
+                    || demuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma
+                {
+                    return "BT.709 / SDR"
+                }
+                if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG { return "HLG" }
+                return "PQ (ST 2084)"
+            }()
+            self.performanceMonitor.updateStreamMetadata(
+                resolution: "\(demuxer.width)x\(demuxer.height)",
+                codecName: demuxer.codec == .hevc ? "HEVC" : "H.264",
+                bitDepth: demuxer.bitDepth,
+                colorPrimaries: primariesStr,
+                transferFunction: transferStr,
+                sourcePeakNits: demuxer.maxPeakNits,
+                targetNits: 203.0
+            )
         }
-
-        // Update telemetry metadata
-        let primariesStr: String = {
-            if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 { return "BT.709" }
-            if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3
-                || demuxer.colorPrimaries == kCVImageBufferColorPrimaries_P3_D65
-            {
-                return "DCI-P3"
-            }
-            return "BT.2020"
-        }()
-        let transferStr: String = {
-            if demuxer.isDolbyVisionProfile5 { return "Dolby Vision (ICtCp)" }
-            if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2
-                || demuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma
-            {
-                return "BT.709 / SDR"
-            }
-            if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG { return "HLG" }
-            return "PQ (ST 2084)"
-        }()
-        self.performanceMonitor.updateStreamMetadata(
-            resolution: "\(demuxer.width)x\(demuxer.height)",
-            codecName: demuxer.codec == .hevc ? "HEVC" : "H.264",
-            bitDepth: demuxer.bitDepth,
-            colorPrimaries: primariesStr,
-            transferFunction: transferStr,
-            sourcePeakNits: demuxer.maxPeakNits,
-            targetNits: 203.0
-        )
 
         print(
             "[PlayerEngine] Loaded successfully. Duration: \(self.duration)s, peakNits: \(demuxer.maxPeakNits), formatDesc: \(String(describing: demuxer.formatDescription))"
@@ -869,7 +886,11 @@ public final class PlayerEngine: PlayerEngineProtocol {
             print("[PlayerEngine] No audio track found or failed to get codec parameters")
         }
 
-        _ = self.sampleBufferRenderer.perform(Self.flushSelector)
+        if !demuxer.hasVideo {
+            clearVideoSurface()
+        } else {
+            _ = self.sampleBufferRenderer.perform(Self.flushSelector)
+        }
         self.audioReceiver.flush()
         self.audioDecoder?.flush()
 
@@ -899,8 +920,11 @@ public final class PlayerEngine: PlayerEngineProtocol {
         }
 
         let decoder = self.decoder
+        let hasVideo = demuxer.hasVideo
         self.feedQueue.async { [weak self] in
-            decoder.flush()
+            if hasVideo {
+                decoder.flush()
+            }
             guard let self else { return }
             DispatchQueue.main.async {
                 self.frameQueue.clear(resetDroppedFrames: true)
@@ -908,7 +932,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 let targetCMTime = CMTime(seconds: effectiveStartTime, preferredTimescale: 60000)
                 self.currentTime = effectiveStartTime
                 self.synchronizer.setRate(1.0, time: targetCMTime)
-                self.displayLink?.isPaused = false
+                self.displayLink?.isPaused = !hasVideo
                 self.isPlaying = true
                 self.playbackState = .playing
                 self.performanceMonitor.handlePlaybackStateChange(isPlaying: true)
@@ -942,11 +966,13 @@ public final class PlayerEngine: PlayerEngineProtocol {
     }
 
     private func startFeeding() {
-        guard self.demuxer != nil else { return }
+        guard let demuxer = self.demuxer else { return }
         isFeeding.withLock { $0 = true }
         isVideoDrainPaused.withLock { $0 = false }
 
-        startFeedingVideo()
+        if demuxer.hasVideo {
+            startFeedingVideo()
+        }
         startFeedingAudio()
     }
 
@@ -1190,7 +1216,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
             startFeeding()
         }
         synchronizer.setRate(1.0, time: synchronizer.currentTime())
-        displayLink?.isPaused = false
+        displayLink?.isPaused = !hasVideo
         isPlaying = true
         playbackState = .playing
         performanceMonitor.handlePlaybackStateChange(isPlaying: true)
@@ -1245,9 +1271,12 @@ public final class PlayerEngine: PlayerEngineProtocol {
         let targetTime = CMTime(seconds: seconds, preferredTimescale: 1000)
 
         let decoder = self.decoder
+        let hasVideo = self.hasVideo
 
         seekTask = Task.detached(priority: .userInitiated) { [weak self, demuxer, decoder] in
-            decoder.resetSession()
+            if hasVideo {
+                decoder.resetSession()
+            }
             demuxer.seek(to: seconds)
 
             guard !Task.isCancelled else { return }
@@ -1257,21 +1286,25 @@ public final class PlayerEngine: PlayerEngineProtocol {
                     guard let self, !Task.isCancelled else { return }
                     self.startFeeding()
                     self.synchronizer.setRate(1.0, time: targetTime)
-                    self.displayLink?.isPaused = false
+                    self.displayLink?.isPaused = !hasVideo
                     self.isPlaying = true
                     self.playbackState = .playing
                 }
             } else {
-                Self.seekPreview(
-                    demuxer: demuxer,
-                    decoder: decoder,
-                    seconds: seconds
-                )
+                if hasVideo {
+                    Self.seekPreview(
+                        demuxer: demuxer,
+                        decoder: decoder,
+                        seconds: seconds
+                    )
+                }
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
                     guard let self, !Task.isCancelled else { return }
                     self.synchronizer.setRate(0.0, time: targetTime)
-                    self.renderCurrentFrame()
+                    if hasVideo {
+                        self.renderCurrentFrame()
+                    }
                 }
             }
         }
@@ -1307,15 +1340,14 @@ public final class PlayerEngine: PlayerEngineProtocol {
 
     public func stepFrameForward() {
         if isPlaying { pause() }
-        // Standard film frame step: 1/24 ≈ 0.04167s (or 1/23.976 ≈ 0.04171s)
-        let frameDuration = 1.0 / 23.976
-        seek(to: min(currentTime + frameDuration, duration))
+        let stepDuration = hasVideo ? (1.0 / 23.976) : 1.0
+        seek(to: min(currentTime + stepDuration, duration))
     }
 
     public func stepFrameBackward() {
         if isPlaying { pause() }
-        let frameDuration = 1.0 / 23.976
-        seek(to: max(currentTime - frameDuration, 0))
+        let stepDuration = hasVideo ? (1.0 / 23.976) : 1.0
+        seek(to: max(currentTime - stepDuration, 0))
     }
 
     public func stepVolume(by delta: Float) {

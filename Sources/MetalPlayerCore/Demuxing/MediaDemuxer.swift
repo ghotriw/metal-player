@@ -10,6 +10,7 @@ public final class MediaDemuxer: @unchecked Sendable {
     private var timebase: AVRational = AVRational(num: 1, den: 1000)
     public private(set) var audioTimebase: AVRational = AVRational(num: 1, den: 1000)
     public private(set) var codec: VideoCodec = .hevc
+    public private(set) var hasVideo: Bool = false
     public private(set) var hasAudio: Bool = false
     public private(set) var audioCodecId: AVCodecID = AV_CODEC_ID_NONE
     public private(set) var audioChannels: Int = 0
@@ -70,6 +71,9 @@ public final class MediaDemuxer: @unchecked Sendable {
             self.audioExtraData = Data(bytes: ed, count: Int(stream.pointee.codecpar.pointee.extradata_size))
         } else {
             self.audioExtraData = nil
+        }
+        if !hasVideo {
+            self.timebase = self.audioTimebase
         }
         self.audioQueue.removeAll()
     }
@@ -671,12 +675,22 @@ public final class MediaDemuxer: @unchecked Sendable {
             }
         }
 
-        guard videoStreamIndex >= 0 else {
+        if videoStreamIndex >= 0 {
+            self.hasVideo = true
+            self.formatDescription = extractVideoFormatDescription()
+        } else if audioStreamIndex >= 0 {
+            self.hasVideo = false
+            self.timebase = self.audioTimebase
+            let stream = formatCtx.pointee.streams[audioStreamIndex]!
+            if stream.pointee.duration > 0 {
+                self.durationSeconds = Double(stream.pointee.duration) * Double(timebase.num) / Double(timebase.den)
+            } else if formatCtx.pointee.duration > 0 {
+                self.durationSeconds = Double(formatCtx.pointee.duration) / Double(AV_TIME_BASE)
+            }
+        } else {
             avformat_close_input(&self.formatCtx)
             return nil
         }
-
-        self.formatDescription = extractVideoFormatDescription()
     }
 
     private func parseExtradata() -> (vps: Data?, sps: Data?, pps: Data?) {
@@ -1210,10 +1224,14 @@ public final class MediaDemuxer: @unchecked Sendable {
         videoQueue.removeAll()
         lastAudioPts = -1
         isEOFInternal = false
+        guard timebase.num > 0 else { return }
         let target = Int64(seconds * Double(timebase.den) / Double(timebase.num))
         self.targetPts = target
-        let ret = av_seek_frame(ctx, Int32(videoStreamIndex), target, AVSEEK_FLAG_BACKWARD)
-        print("[MediaDemuxer] av_seek_frame to targetPts: \(target) (seconds: \(seconds)), ret: \(ret)")
+        let streamIdx = videoStreamIndex >= 0 ? videoStreamIndex : audioStreamIndex
+        let ret = av_seek_frame(ctx, Int32(streamIdx), target, AVSEEK_FLAG_BACKWARD)
+        print(
+            "[MediaDemuxer] av_seek_frame to targetPts: \(target) (seconds: \(seconds)), stream: \(streamIdx), ret: \(ret)"
+        )
     }
 
     public func cancel() {

@@ -10,9 +10,18 @@ public enum MediaOpenPanel {
             .quickTimeMovie,
             .mpeg4Movie,
             .avi,
+            .audio,
+            .mp3,
+            .wav,
+            .aiff,
         ]
-        // Add common video formats supported by FFmpeg that may not be covered by system presets
-        let extensions = ["mkv", "webm", "flv", "wmv", "ts", "m4v", "mov", "mp4", "ogv"]
+        // Add common video and audio formats supported by FFmpeg that may not be covered by system presets
+        let extensions = [
+            // Video
+            "mkv", "webm", "flv", "wmv", "ts", "m4v", "mov", "mp4", "ogv",
+            // Audio
+            "mp3", "flac", "wav", "m4a", "aac", "ogg", "opus", "alac", "aif", "aiff", "wma", "ape",
+        ]
         for ext in extensions {
             if let type = UTType(filenameExtension: ext), !types.contains(type) {
                 types.append(type)

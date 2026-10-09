@@ -43,6 +43,54 @@ public struct ContentView: View {
                 onToggleFullscreen?()
             }
 
+            // In audio-only mode, mask video layer with a solid black backdrop behind artwork
+            if engine.isLoaded && !engine.hasVideo {
+                Color.black
+                    .ignoresSafeArea()
+
+                VStack(spacing: 20) {
+                    if let artworkData = engine.artworkData, let nsImage = NSImage(data: artworkData) {
+                        Image(nsImage: nsImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: 280, maxHeight: 280)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 10)
+                    } else {
+                        Image(systemName: "waveform")
+                            .font(.system(size: 110, weight: .light))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .frame(width: 200, height: 160)
+                            .shadow(color: .white.opacity(0.15), radius: 24, x: 0, y: 0)
+                    }
+
+                    VStack(spacing: 6) {
+                        Text(engine.mediaTitle)
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+
+                        if !engine.audioTracks.isEmpty,
+                            let currentTrack = engine.audioTracks.first(where: { $0.id == engine.selectedAudioTrackId })
+                        {
+                            let kHz = Double(currentTrack.sampleRate) / 1000.0
+                            let formattedRate =
+                                kHz.truncatingRemainder(dividingBy: 1) == 0
+                                ? String(format: "%.0f", kHz) : String(format: "%.1f", kHz)
+                            Text(
+                                "\(currentTrack.codecName.uppercased()) • \(formattedRate) kHz • \(currentTrack.channels) ch"
+                            )
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.6))
+                        }
+                    }
+                }
+                .padding(32)
+                .allowsHitTesting(false)
+            }
+
             // Subtle loading indicator while engine is parsing/decoding first frame or buffering stream
             if (engine.isLoading || !engine.isLoaded) && engine.loadError == nil {
                 ProgressView()

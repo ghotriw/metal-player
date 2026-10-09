@@ -210,4 +210,26 @@ public final class MetalVideoRenderer: @unchecked Sendable {
         commandBuffer.present(drawable)
         commandBuffer.commit()
     }
+
+    /// Clears the Metal layer frame by presenting a black clear frame.
+    public func clear() {
+        renderLock.lock()
+        defer { renderLock.unlock() }
+
+        guard let drawable = metalLayer.nextDrawable() else { return }
+        let renderPassDesc = MTLRenderPassDescriptor()
+        renderPassDesc.colorAttachments[0].texture = drawable.texture
+        renderPassDesc.colorAttachments[0].loadAction = .clear
+        renderPassDesc.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+        renderPassDesc.colorAttachments[0].storeAction = .store
+
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+            let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDesc)
+        else {
+            return
+        }
+        encoder.endEncoding()
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+    }
 }

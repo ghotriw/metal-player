@@ -32,6 +32,7 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor var mediaTitle: String { get set }
     @MainActor var artworkData: Data? { get }
     @MainActor var artworkURL: URL? { get }
+    @MainActor var hasVideo: Bool { get }
     @MainActor var videoWidth: Int { get }
     @MainActor var videoHeight: Int { get }
 

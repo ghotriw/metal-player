@@ -274,4 +274,66 @@ struct PlayerEngineTests {
         #expect(engine.mediaTitle == "Interstellar.mp4")
         engine.stop()
     }
+
+    @Test("PlayerEngine correctly loads and handles audio-only files without video")
+    @MainActor
+    func testAudioOnlyPlayback() {
+        let audioPath = "tmp/yt_aac_only.m4a"
+        guard FileManager.default.fileExists(atPath: audioPath) else { return }
+
+        let engine = PlayerEngine()
+        engine.load(path: audioPath)
+
+        #expect(engine.isLoaded == true)
+        #expect(engine.hasVideo == false)
+        #expect(engine.duration > 0.0)
+        #expect(engine.videoWidth == 0)
+        #expect(engine.videoHeight == 0)
+        #expect(!engine.audioTracks.isEmpty)
+
+        // Test playback control
+        engine.play()
+        #expect(engine.isPlaying == true)
+
+        engine.pause()
+        #expect(engine.isPlaying == false)
+
+        // Test seek
+        engine.seek(to: 5.0)
+        #expect(engine.currentTime == 5.0)
+
+        engine.seekRelative(by: 2.0)
+        #expect(engine.currentTime == 7.0)
+
+        engine.stop()
+        #expect(engine.isLoaded == false)
+        #expect(engine.playbackState == .idle)
+    }
+
+    @Test("Switching from video to audio-only file clears video state")
+    @MainActor
+    func testVideoToAudioSwitchClearsVideoState() {
+        let referenceVideoPath = "/Users/ghotriw/w_hdm_full.mkv"
+        let audioPath = "tmp/yt_aac_only.m4a"
+        guard FileManager.default.fileExists(atPath: referenceVideoPath),
+            FileManager.default.fileExists(atPath: audioPath)
+        else { return }
+
+        let engine = PlayerEngine()
+        // 1. Load video
+        engine.load(path: referenceVideoPath)
+        #expect(engine.isLoaded == true)
+        #expect(engine.hasVideo == true)
+        #expect(engine.videoWidth > 0)
+
+        // 2. Load audio directly (simulates Command + O open audio file after video)
+        engine.load(path: audioPath)
+        #expect(engine.isLoaded == true)
+        #expect(engine.hasVideo == false)
+        #expect(engine.videoWidth == 0)
+        #expect(engine.videoHeight == 0)
+
+        engine.stop()
+        #expect(engine.isLoaded == false)
+    }
 }
