@@ -126,7 +126,11 @@ public struct ContentView: View {
                 fontSize: engine.subtitleFontSize,
                 textColor: Color(hex: engine.subtitleTextColorHex) ?? .white,
                 backgroundColor: Color(hex: engine.subtitleBgColorHex) ?? .black,
-                backgroundOpacity: engine.subtitleBgOpacity
+                backgroundOpacity: engine.subtitleBgOpacity,
+                fontName: engine.subtitleFontName,
+                fontWeight: engine.subtitleFontWeight,
+                videoWidth: engine.videoWidth,
+                videoHeight: engine.videoHeight
             )
             .ignoresSafeArea()
             .allowsHitTesting(false)

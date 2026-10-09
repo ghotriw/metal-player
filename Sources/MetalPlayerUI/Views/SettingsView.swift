@@ -23,6 +23,12 @@ public struct SettingsView: View {
     @AppStorage(PlayerConfiguration.keySubtitleFontSize)
     private var subtitleFontSize: Double = 24.0
 
+    @AppStorage(PlayerConfiguration.keySubtitleFontName)
+    private var subtitleFontName: String = "System Rounded"
+
+    @AppStorage(PlayerConfiguration.keySubtitleFontWeight)
+    private var subtitleFontWeight: String = "Semibold"
+
     @AppStorage(PlayerConfiguration.keySubtitleTextColorHex)
     private var subtitleTextColorHex: String = "#FFFFFF"
 
@@ -225,12 +231,17 @@ public struct SettingsView: View {
                         .frame(height: 100)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                        Text("The quick brown fox jumps over the lazy dog.")
-                            .font(.system(size: subtitleFontSize, weight: .semibold, design: .rounded))
+                        let previewText = "The quick brown fox jumps over the lazy dog."
+
+                        Text(previewText)
+                            .font(
+                                SubtitleOverlayView.resolveFont(
+                                    name: subtitleFontName, size: subtitleFontSize, weightName: subtitleFontWeight)
+                            )
                             .foregroundStyle(Color(hex: subtitleTextColorHex) ?? .white)
                             .multilineTextAlignment(.center)
-                            .shadow(color: .black.opacity(0.9), radius: 2, x: 0, y: 1.5)
-                            .shadow(color: .black.opacity(0.8), radius: 4, x: 0, y: 2)
+                            .subtitleOutline(radius: 1.5, color: .black.opacity(0.95))
+                            .shadow(color: .black.opacity(0.4), radius: 2, x: 0, y: 1.5)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 6)
                             .background(
@@ -246,10 +257,57 @@ public struct SettingsView: View {
             }
 
             Section {
+                // Font Family Picker
+                HStack {
+                    Text("Font:")
+                    Spacer()
+                    Picker("", selection: $subtitleFontName) {
+                        Section("System Designs") {
+                            Text("Rounded").tag("System Rounded")
+                            Text("Standard (SF Pro)").tag("System")
+                            Text("Serif (New York)").tag("System Serif")
+                            Text("Monospaced (SF Mono)").tag("System Monospaced")
+                        }
+                        Section("Standard Fonts") {
+                            ForEach(
+                                [
+                                    "Helvetica Neue", "Arial", "Avenir Next", "Futura", "Trebuchet MS", "Verdana",
+                                    "Menlo", "Georgia",
+                                ], id: \.self
+                            ) { name in
+                                Text(name).tag(name)
+                            }
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 200)
+                    .onChange(of: subtitleFontName) { _, _ in
+                        notifyChange()
+                    }
+                }
+
+                // Font Weight Picker
+                HStack {
+                    Text("Weight:")
+                    Spacer()
+                    Picker("", selection: $subtitleFontWeight) {
+                        Text("Regular").tag("Regular")
+                        Text("Medium").tag("Medium")
+                        Text("Semibold").tag("Semibold")
+                        Text("Bold").tag("Bold")
+                        Text("Heavy").tag("Heavy")
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 200)
+                    .onChange(of: subtitleFontWeight) { _, _ in
+                        notifyChange()
+                    }
+                }
+
                 // Font Size
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("Font Size:")
+                        Text("Base Font Size:")
                         Spacer()
                         Text("\(Int(subtitleFontSize)) pt")
                             .monospacedDigit()
@@ -259,6 +317,9 @@ public struct SettingsView: View {
                         .onChange(of: subtitleFontSize) { _, _ in
                             notifyChange()
                         }
+                    Text("Auto-scales proportionally with window and fullscreen size.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 // Text Color Picker
@@ -324,6 +385,8 @@ public struct SettingsView: View {
                     Spacer()
                     Button("Reset to Defaults") {
                         subtitleFontSize = 24.0
+                        subtitleFontName = "System Rounded"
+                        subtitleFontWeight = "Semibold"
                         subtitleTextColorHex = "#FFFFFF"
                         subtitleBgColorHex = "#000000"
                         subtitleBgOpacity = 0.65
@@ -347,6 +410,8 @@ public struct SettingsView: View {
             resumeStartThreshold: resumeStartThreshold,
             resumeEndThresholdRatio: resumeEndThresholdRatio,
             subtitleFontSize: subtitleFontSize,
+            subtitleFontName: subtitleFontName,
+            subtitleFontWeight: subtitleFontWeight,
             subtitleTextColorHex: subtitleTextColorHex,
             subtitleBgColorHex: subtitleBgColorHex,
             subtitleBgOpacity: subtitleBgOpacity

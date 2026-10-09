@@ -57,6 +57,8 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor var currentSubtitleCue: SubtitleCue? { get }
     @MainActor var currentSubtitleCues: [SubtitleCue] { get }
     @MainActor var subtitleFontSize: Double { get set }
+    @MainActor var subtitleFontName: String { get set }
+    @MainActor var subtitleFontWeight: String { get set }
     @MainActor var subtitleTextColorHex: String { get set }
     @MainActor var subtitleBgColorHex: String { get set }
     @MainActor var subtitleBgOpacity: Double { get set }

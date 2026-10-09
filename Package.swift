@@ -35,6 +35,9 @@ let package = Package(
         .target(
             name: "MetalPlayerUI",
             dependencies: ["MetalPlayerCore"],
+            resources: [
+                .process("Shaders/SubtitleShaders.metal")
+            ],
             swiftSettings: defaultSwiftSettings
         ),
         .target(
@@ -57,7 +60,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MetalPlayerKitTests",
-            dependencies: ["MetalPlayerKit"],
+            dependencies: ["MetalPlayerKit", "MetalPlayerUI"],
             swiftSettings: defaultSwiftSettings
         ),
     ]

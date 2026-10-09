@@ -43,6 +43,12 @@ public struct PlayerConfiguration: Sendable, Equatable {
     /// Subtitle background opacity (0.0 ... 1.0, default 0.65).
     public var subtitleBgOpacity: Double
 
+    /// Subtitle font family / design (default "System Rounded").
+    public var subtitleFontName: String
+
+    /// Subtitle font weight (e.g. "Regular", "Medium", "Semibold", "Bold", "Heavy", default "Semibold").
+    public var subtitleFontWeight: String
+
     /// Explicit start time in seconds requested on launch (if provided, overrides resume history).
     public var startTime: Double?
 
@@ -57,6 +63,8 @@ public struct PlayerConfiguration: Sendable, Equatable {
         resumeStartThreshold: Double = 15.0,
         resumeEndThresholdRatio: Double = 0.95,
         subtitleFontSize: Double = 24.0,
+        subtitleFontName: String = "System Rounded",
+        subtitleFontWeight: String = "Semibold",
         subtitleTextColorHex: String = "#FFFFFF",
         subtitleBgColorHex: String = "#000000",
         subtitleBgOpacity: Double = 0.65,
@@ -72,6 +80,8 @@ public struct PlayerConfiguration: Sendable, Equatable {
         self.resumeStartThreshold = resumeStartThreshold
         self.resumeEndThresholdRatio = resumeEndThresholdRatio
         self.subtitleFontSize = subtitleFontSize
+        self.subtitleFontName = subtitleFontName
+        self.subtitleFontWeight = subtitleFontWeight
         self.subtitleTextColorHex = subtitleTextColorHex
         self.subtitleBgColorHex = subtitleBgColorHex
         self.subtitleBgOpacity = subtitleBgOpacity
@@ -85,6 +95,8 @@ public struct PlayerConfiguration: Sendable, Equatable {
     public static let keyResumeStartThreshold = "MetalPlayer.resumeStartThreshold"
     public static let keyResumeEndThresholdRatio = "MetalPlayer.resumeEndThresholdRatio"
     public static let keySubtitleFontSize = "MetalPlayer.subtitleFontSize"
+    public static let keySubtitleFontName = "MetalPlayer.subtitleFontName"
+    public static let keySubtitleFontWeight = "MetalPlayer.subtitleFontWeight"
     public static let keySubtitleTextColorHex = "MetalPlayer.subtitleTextColorHex"
     public static let keySubtitleBgColorHex = "MetalPlayer.subtitleBgColorHex"
     public static let keySubtitleBgOpacity = "MetalPlayer.subtitleBgOpacity"
@@ -113,6 +125,12 @@ public struct PlayerConfiguration: Sendable, Equatable {
         if let fontSize = userDefaults.object(forKey: keySubtitleFontSize) as? NSNumber {
             config.subtitleFontSize = fontSize.doubleValue
         }
+        if let fontName = userDefaults.string(forKey: keySubtitleFontName) {
+            config.subtitleFontName = fontName
+        }
+        if let fontWeight = userDefaults.string(forKey: keySubtitleFontWeight) {
+            config.subtitleFontWeight = fontWeight
+        }
         if let textColor = userDefaults.string(forKey: keySubtitleTextColorHex) {
             config.subtitleTextColorHex = textColor
         }
@@ -134,6 +152,8 @@ public struct PlayerConfiguration: Sendable, Equatable {
         userDefaults.set(resumeStartThreshold, forKey: Self.keyResumeStartThreshold)
         userDefaults.set(resumeEndThresholdRatio, forKey: Self.keyResumeEndThresholdRatio)
         userDefaults.set(subtitleFontSize, forKey: Self.keySubtitleFontSize)
+        userDefaults.set(subtitleFontName, forKey: Self.keySubtitleFontName)
+        userDefaults.set(subtitleFontWeight, forKey: Self.keySubtitleFontWeight)
         userDefaults.set(subtitleTextColorHex, forKey: Self.keySubtitleTextColorHex)
         userDefaults.set(subtitleBgColorHex, forKey: Self.keySubtitleBgColorHex)
         userDefaults.set(subtitleBgOpacity, forKey: Self.keySubtitleBgOpacity)
@@ -191,6 +211,10 @@ public struct PlayerConfiguration: Sendable, Equatable {
                 config.resumePlayback = false
             } else if arg == "--resume" || arg == "--enable-resume" {
                 config.resumePlayback = true
+            } else if arg.starts(with: "--subtitle-font=") {
+                config.subtitleFontName = String(arg.dropFirst("--subtitle-font=".count))
+            } else if arg.starts(with: "--subtitle-weight=") {
+                config.subtitleFontWeight = String(arg.dropFirst("--subtitle-weight=".count))
             } else if arg.starts(with: "--header=") {
                 let headerStr = String(arg.dropFirst("--header=".count))
                 if let colonIdx = headerStr.firstIndex(of: ":") {

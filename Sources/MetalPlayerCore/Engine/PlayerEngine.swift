@@ -106,6 +106,8 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.metalTargetNits = config.targetNits
         self.metalSharpness = config.sharpness
         self.subtitleFontSize = config.subtitleFontSize
+        self.subtitleFontName = config.subtitleFontName
+        self.subtitleFontWeight = config.subtitleFontWeight
         self.subtitleTextColorHex = config.subtitleTextColorHex
         self.subtitleBgColorHex = config.subtitleBgColorHex
         self.subtitleBgOpacity = config.subtitleBgOpacity
@@ -135,6 +137,8 @@ public final class PlayerEngine: PlayerEngineProtocol {
         currentSubtitleCue?.text
     }
     public var subtitleFontSize: Double = 24.0
+    public var subtitleFontName: String = "System Rounded"
+    public var subtitleFontWeight: String = "Semibold"
     public var subtitleTextColorHex: String = "#FFFFFF"
     public var subtitleBgColorHex: String = "#000000"
     public var subtitleBgOpacity: Double = 0.65
@@ -263,6 +267,8 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.metalSharpness = configuration.sharpness
         self.volume = configuration.initialVolume
         self.subtitleFontSize = configuration.subtitleFontSize
+        self.subtitleFontName = configuration.subtitleFontName
+        self.subtitleFontWeight = configuration.subtitleFontWeight
         self.subtitleTextColorHex = configuration.subtitleTextColorHex
         self.subtitleBgColorHex = configuration.subtitleBgColorHex
         self.subtitleBgOpacity = configuration.subtitleBgOpacity

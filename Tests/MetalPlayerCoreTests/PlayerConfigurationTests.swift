@@ -93,4 +93,42 @@ struct PlayerConfigurationTests {
         #expect(config.startTime == 124.5)
         #expect(config.resumePlayback == false)
     }
+
+    @Test("CLI arguments correctly parse subtitle font name")
+    func testParseSubtitleFontFlag() {
+        let args = ["MetalPlayer", "--subtitle-font=Helvetica Neue", "movie.mkv"]
+        let (config, _) = PlayerConfiguration.parse(arguments: args)
+        #expect(config.subtitleFontName == "Helvetica Neue")
+    }
+
+    @Test("UserDefaults roundtrip preserves subtitle font name")
+    func testUserDefaultsSubtitleFont() {
+        let defaults = UserDefaults(suiteName: "test.subtitle.font")!
+        defaults.removePersistentDomain(forName: "test.subtitle.font")
+        var config = PlayerConfiguration()
+        config.subtitleFontName = "Avenir Next"
+        config.saveToUserDefaults(userDefaults: defaults)
+
+        let loaded = PlayerConfiguration.loadFromUserDefaults(userDefaults: defaults)
+        #expect(loaded.subtitleFontName == "Avenir Next")
+    }
+
+    @Test("CLI arguments correctly parse subtitle font weight")
+    func testParseSubtitleWeightFlag() {
+        let args = ["MetalPlayer", "--subtitle-weight=bold", "movie.mkv"]
+        let (config, _) = PlayerConfiguration.parse(arguments: args)
+        #expect(config.subtitleFontWeight == "bold")
+    }
+
+    @Test("UserDefaults roundtrip preserves subtitle font weight")
+    func testUserDefaultsSubtitleWeight() {
+        let defaults = UserDefaults(suiteName: "test.subtitle.weight")!
+        defaults.removePersistentDomain(forName: "test.subtitle.weight")
+        var config = PlayerConfiguration()
+        config.subtitleFontWeight = "Heavy"
+        config.saveToUserDefaults(userDefaults: defaults)
+
+        let loaded = PlayerConfiguration.loadFromUserDefaults(userDefaults: defaults)
+        #expect(loaded.subtitleFontWeight == "Heavy")
+    }
 }

@@ -7,19 +7,31 @@ public struct SubtitleOverlayView: View {
     public let textColor: Color
     public let backgroundColor: Color
     public let backgroundOpacity: Double
+    public let fontName: String
+    public let fontWeight: String
+    public let videoWidth: Int
+    public let videoHeight: Int
 
     public init(
         cues: [SubtitleCue],
         fontSize: Double = 24.0,
         textColor: Color = .white,
         backgroundColor: Color = .black,
-        backgroundOpacity: Double = 0.65
+        backgroundOpacity: Double = 0.65,
+        fontName: String = "System Rounded",
+        fontWeight: String = "Semibold",
+        videoWidth: Int = 0,
+        videoHeight: Int = 0
     ) {
         self.cues = cues
         self.fontSize = fontSize
         self.textColor = textColor
         self.backgroundColor = backgroundColor
         self.backgroundOpacity = backgroundOpacity
+        self.fontName = fontName
+        self.fontWeight = fontWeight
+        self.videoWidth = videoWidth
+        self.videoHeight = videoHeight
     }
 
     public init(
@@ -27,16 +39,28 @@ public struct SubtitleOverlayView: View {
         fontSize: Double = 24.0,
         textColor: Color = .white,
         backgroundColor: Color = .black,
-        backgroundOpacity: Double = 0.65
+        backgroundOpacity: Double = 0.65,
+        fontName: String = "System Rounded",
+        fontWeight: String = "Semibold",
+        videoWidth: Int = 0,
+        videoHeight: Int = 0
     ) {
         self.init(
             cues: cue.map { [$0] } ?? [],
             fontSize: fontSize,
             textColor: textColor,
             backgroundColor: backgroundColor,
-            backgroundOpacity: backgroundOpacity
+            backgroundOpacity: backgroundOpacity,
+            fontName: fontName,
+            fontWeight: fontWeight,
+            videoWidth: videoWidth,
+            videoHeight: videoHeight
         )
     }
+
+    public static let referenceViewportHeight: Double = 720.0
+    public static let minFontSize: Double = 14.0
+    public static let maxFontSize: Double = 72.0
 
     private var topCues: [SubtitleCue] {
         cues.filter { isTopAligned($0.alignment) }
@@ -52,73 +76,159 @@ public struct SubtitleOverlayView: View {
 
     public var body: some View {
         if !cues.isEmpty {
-            VStack(spacing: 8) {
-                // Top aligned cues
-                if !topCues.isEmpty {
-                    VStack(spacing: 6) {
-                        ForEach(topCues) { cue in
-                            cueRow(cue)
+            GeometryReader { geometry in
+                let containerSize = geometry.size
+                let videoFrame = Self.computeVideoFrame(
+                    containerSize: containerSize, videoWidth: videoWidth, videoHeight: videoHeight)
+                let scale = videoFrame.height > 0 ? (videoFrame.height / Self.referenceViewportHeight) : 1.0
+                let effectiveFontSize = min(max(fontSize * scale, Self.minFontSize), Self.maxFontSize)
+                let verticalEdgePadding = max(20.0, 40.0 * scale)
+                let horizontalMargin = max(16.0, 32.0 * scale)
+
+                ZStack {
+                    VStack(spacing: 8 * scale) {
+                        // Top aligned cues
+                        if !topCues.isEmpty {
+                            VStack(spacing: 6 * scale) {
+                                ForEach(topCues) { cue in
+                                    cueRow(
+                                        cue, effectiveFontSize: effectiveFontSize, horizontalMargin: horizontalMargin,
+                                        scale: scale)
+                                }
+                            }
+                            .padding(.top, verticalEdgePadding)
+                        }
+
+                        Spacer()
+
+                        // Center aligned cues
+                        if !centerCues.isEmpty {
+                            VStack(spacing: 6 * scale) {
+                                ForEach(centerCues) { cue in
+                                    cueRow(
+                                        cue, effectiveFontSize: effectiveFontSize, horizontalMargin: horizontalMargin,
+                                        scale: scale)
+                                }
+                            }
+                        }
+
+                        Spacer()
+
+                        // Bottom aligned cues
+                        if !bottomCues.isEmpty {
+                            VStack(spacing: 6 * scale) {
+                                ForEach(bottomCues) { cue in
+                                    cueRow(
+                                        cue, effectiveFontSize: effectiveFontSize, horizontalMargin: horizontalMargin,
+                                        scale: scale)
+                                }
+                            }
+                            .padding(.bottom, verticalEdgePadding)
                         }
                     }
-                    .padding(.top, 48)
+                    .frame(width: videoFrame.width, height: videoFrame.height)
+                    .position(x: videoFrame.midX, y: videoFrame.midY)
                 }
-
-                Spacer()
-
-                // Center aligned cues
-                if !centerCues.isEmpty {
-                    VStack(spacing: 6) {
-                        ForEach(centerCues) { cue in
-                            cueRow(cue)
-                        }
-                    }
-                }
-
-                Spacer()
-
-                // Bottom aligned cues
-                if !bottomCues.isEmpty {
-                    VStack(spacing: 6) {
-                        ForEach(bottomCues) { cue in
-                            cueRow(cue)
-                        }
-                    }
-                    .padding(.bottom, 48)
-                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .transition(.opacity.animation(.easeInOut(duration: 0.12)))
         }
     }
 
+    /// Calculates the aspect-fit frame of the video inside the container,
+    /// matching the placement of NativeVideoHostView / MetalVideoRenderer.
+    nonisolated public static func computeVideoFrame(containerSize: CGSize, videoWidth: Int, videoHeight: Int) -> CGRect
+    {
+        guard containerSize.width > 0, containerSize.height > 0 else {
+            return CGRect(origin: .zero, size: containerSize)
+        }
+        guard videoWidth > 0, videoHeight > 0 else {
+            return CGRect(origin: .zero, size: containerSize)
+        }
+
+        let videoAspect = Double(videoWidth) / Double(videoHeight)
+        let containerAspect = Double(containerSize.width) / Double(containerSize.height)
+
+        if containerAspect > videoAspect {
+            // Container is wider than video: pillarbox on sides
+            let targetWidth = Double(containerSize.height) * videoAspect
+            let offsetX = (Double(containerSize.width) - targetWidth) / 2.0
+            return CGRect(x: offsetX, y: 0, width: targetWidth, height: Double(containerSize.height))
+        } else {
+            // Container is taller than video: letterbox on top/bottom
+            let targetHeight = Double(containerSize.width) / videoAspect
+            let offsetY = (Double(containerSize.height) - targetHeight) / 2.0
+            return CGRect(x: 0, y: offsetY, width: Double(containerSize.width), height: targetHeight)
+        }
+    }
+
     @ViewBuilder
-    private func cueRow(_ cue: SubtitleCue) -> some View {
+    private func cueRow(_ cue: SubtitleCue, effectiveFontSize: Double, horizontalMargin: Double, scale: Double)
+        -> some View
+    {
         HStack {
             if isTrailingAligned(cue.alignment) {
                 Spacer()
             }
 
-            subtitleLabel(cue.text, textAlignment: textAlignment(for: cue.alignment))
+            subtitleLabel(
+                cue.text, textAlignment: textAlignment(for: cue.alignment), effectiveFontSize: effectiveFontSize,
+                scale: scale)
 
             if isLeadingAligned(cue.alignment) {
                 Spacer()
             }
         }
-        .padding(.horizontal, 32)
+        .padding(.horizontal, horizontalMargin)
+    }
+
+    public static func resolveWeight(_ name: String) -> Font.Weight {
+        switch name.lowercased() {
+        case "ultralight": return .ultraLight
+        case "thin": return .thin
+        case "light": return .light
+        case "regular": return .regular
+        case "medium": return .medium
+        case "semibold": return .semibold
+        case "bold": return .bold
+        case "heavy": return .heavy
+        case "black": return .black
+        default: return .semibold
+        }
+    }
+
+    public static func resolveFont(name: String, size: Double, weightName: String = "Semibold") -> Font {
+        let weight = resolveWeight(weightName)
+        switch name {
+        case "System Rounded", "":
+            return .system(size: size, weight: weight, design: .rounded)
+        case "System", "Standard":
+            return .system(size: size, weight: weight, design: .default)
+        case "System Serif", "Serif":
+            return .system(size: size, weight: weight, design: .serif)
+        case "System Monospaced", "Monospaced":
+            return .system(size: size, weight: weight, design: .monospaced)
+        default:
+            return .custom(name, size: size).weight(weight)
+        }
     }
 
     @ViewBuilder
-    private func subtitleLabel(_ text: String, textAlignment: TextAlignment) -> some View {
+    private func subtitleLabel(_ text: String, textAlignment: TextAlignment, effectiveFontSize: Double, scale: Double)
+        -> some View
+    {
+        let outlineWidth = max(1.0, 1.5 * scale)
+
         Text(text)
-            .font(.system(size: fontSize, weight: .semibold, design: .rounded))
+            .font(Self.resolveFont(name: fontName, size: effectiveFontSize, weightName: fontWeight))
             .foregroundStyle(textColor)
             .multilineTextAlignment(textAlignment)
-            .shadow(color: .black.opacity(0.9), radius: 2, x: 0, y: 1.5)
-            .shadow(color: .black.opacity(0.8), radius: 4, x: 0, y: 2)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .subtitleOutline(radius: outlineWidth, color: .black.opacity(0.95))
+            .shadow(color: .black.opacity(0.4), radius: max(1.5, 2.0 * scale), x: 0, y: max(1.0, 1.5 * scale))
+            .padding(.horizontal, max(10.0, 16.0 * scale))
+            .padding(.vertical, max(5.0, 8.0 * scale))
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: max(5.0, 8.0 * scale))
                     .fill(backgroundColor.opacity(backgroundOpacity))
             )
     }
