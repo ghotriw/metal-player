@@ -29,7 +29,7 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor var isLoaded: Bool { get }
     @MainActor var isLoading: Bool { get }
     @MainActor var loadError: String? { get }
-    @MainActor var mediaTitle: String { get }
+    @MainActor var mediaTitle: String { get set }
     @MainActor var videoWidth: Int { get }
     @MainActor var videoHeight: Int { get }
 
@@ -62,11 +62,13 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor func loadExternalSubtitle(url: URL)
 
     @MainActor func load(path: String)
+    @MainActor func load(path: String, title: String?)
     @MainActor func load(path: String, headers: [String: String])
-    @MainActor func load(path: String, headers: [String: String], startTime: Double?)
+    @MainActor func load(path: String, title: String?, headers: [String: String], startTime: Double?)
     @MainActor func loadAsync(path: String) async
+    @MainActor func loadAsync(path: String, title: String?) async
     @MainActor func loadAsync(path: String, headers: [String: String]) async
-    @MainActor func loadAsync(path: String, headers: [String: String], startTime: Double?) async
+    @MainActor func loadAsync(path: String, title: String?, headers: [String: String], startTime: Double?) async
     @MainActor func stop()
     @MainActor func play()
     @MainActor func pause()

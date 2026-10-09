@@ -232,4 +232,38 @@ struct PlayerEngineTests {
         #expect(MediaDemuxer.isNetworkURL("/Users/user/video.mkv") == false)
         #expect(MediaDemuxer.isNetworkURL("file:///path/to/movie.mov") == false)
     }
+
+    @Test("PlayerEngine.resolveTitle correctly prioritizes explicit title over URL and path")
+    func testResolveTitle() {
+        // 1. Explicit title always takes precedence
+        #expect(PlayerEngine.resolveTitle(from: "http://example.com/stream", explicitTitle: "My Film") == "My Film")
+        #expect(PlayerEngine.resolveTitle(from: "/path/video.mkv", explicitTitle: "Custom Title") == "Custom Title")
+
+        // 2. Network URL fallback to lastPathComponent or host
+        #expect(PlayerEngine.resolveTitle(from: "http://media.server:8096/videos/stream.mkv") == "stream.mkv")
+        #expect(PlayerEngine.resolveTitle(from: "http://media.server:8096/") == "media.server")
+
+        // 3. Local file path fallback to filename
+        #expect(PlayerEngine.resolveTitle(from: "/Users/alice/Movies/Inception.2010.mkv") == "Inception.2010.mkv")
+    }
+
+    @Test("PlayerEngine load updates mediaTitle and stop clears it")
+    @MainActor
+    func testEngineMediaTitleLifecycle() {
+        let engine = PlayerEngine()
+        #expect(engine.mediaTitle == "")
+
+        // Load with explicit title
+        engine.load(path: "http://127.0.0.1:65534/dummy", title: "Blade Runner")
+        #expect(engine.mediaTitle == "Blade Runner")
+
+        // Stop resets title
+        engine.stop()
+        #expect(engine.mediaTitle == "")
+
+        // Load without explicit title uses path resolution
+        engine.load(path: "/path/to/Interstellar.mp4")
+        #expect(engine.mediaTitle == "Interstellar.mp4")
+        engine.stop()
+    }
 }

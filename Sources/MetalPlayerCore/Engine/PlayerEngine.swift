@@ -501,37 +501,78 @@ public final class PlayerEngine: PlayerEngineProtocol {
         }
     }
 
+    /// Resolves the user-facing media title from a file/stream path, falling back to
+    /// URL host or file name if no explicit title is provided.
+    nonisolated public static func resolveTitle(from path: String, explicitTitle: String? = nil) -> String {
+        if let explicitTitle, !explicitTitle.isEmpty {
+            return explicitTitle
+        }
+        if MediaDemuxer.isNetworkURL(path), let url = URL(string: path) {
+            let last = url.lastPathComponent
+            if last.isEmpty || last == "/" {
+                return url.host ?? path
+            }
+            return last
+        }
+        return URL(fileURLWithPath: path).lastPathComponent
+    }
+
     public func load(path: String) {
-        load(path: path, headers: [:], startTime: nil)
+        load(path: path, title: nil, headers: [:], startTime: nil)
+    }
+
+    public func load(path: String, title: String?) {
+        load(path: path, title: title, headers: [:], startTime: nil)
     }
 
     public func load(path: String, headers: [String: String]) {
-        load(path: path, headers: headers, startTime: nil)
+        load(path: path, title: nil, headers: headers, startTime: nil)
     }
 
     public func load(path: String, headers: [String: String], startTime: Double?) {
+        load(path: path, title: nil, headers: headers, startTime: startTime)
+    }
+
+    public func load(
+        path: String,
+        title: String? = nil,
+        headers: [String: String] = [:],
+        startTime: Double? = nil
+    ) {
+        self.mediaTitle = Self.resolveTitle(from: path, explicitTitle: title)
         let isNetwork = MediaDemuxer.isNetworkURL(path)
         if isNetwork {
             loadingTask?.cancel()
             loadingTask = Task { @MainActor [weak self] in
-                await self?.loadAsync(path: path, headers: headers, startTime: startTime)
+                await self?.loadAsync(path: path, title: title, headers: headers, startTime: startTime)
             }
         } else {
-            loadSync(path: path, headers: headers, startTime: startTime)
+            loadSync(path: path, title: title, headers: headers, startTime: startTime)
         }
     }
 
     public func loadAsync(path: String) async {
-        await loadAsync(path: path, headers: [:], startTime: nil)
+        await loadAsync(path: path, title: nil, headers: [:], startTime: nil)
+    }
+
+    public func loadAsync(path: String, title: String?) async {
+        await loadAsync(path: path, title: title, headers: [:], startTime: nil)
     }
 
     public func loadAsync(path: String, headers: [String: String]) async {
-        await loadAsync(path: path, headers: headers, startTime: nil)
+        await loadAsync(path: path, title: nil, headers: headers, startTime: nil)
     }
 
-    public func loadAsync(path: String, headers: [String: String], startTime: Double?) async {
+    public func loadAsync(
+        path: String,
+        title: String? = nil,
+        headers: [String: String] = [:],
+        startTime: Double? = nil
+    ) async {
+        self.mediaTitle = Self.resolveTitle(from: path, explicitTitle: title)
         print(
-            "[PlayerEngine] Loading async:", path, "with headers count:", headers.count, "startTime:",
+            "[PlayerEngine] Loading async:", path, "title:", self.mediaTitle, "with headers count:", headers.count,
+            "startTime:",
             String(describing: startTime))
 
         // Save progress for previously active media if present
@@ -588,8 +629,11 @@ public final class PlayerEngine: PlayerEngineProtocol {
         applyLoadedDemuxer(demuxer, path: path, headers: headers, requestedStartTime: startTime)
     }
 
-    private func loadSync(path: String, headers: [String: String], startTime: Double?) {
-        print("[PlayerEngine] Loading sync:", path, "startTime:", String(describing: startTime))
+    private func loadSync(path: String, title: String?, headers: [String: String], startTime: Double?) {
+        self.mediaTitle = Self.resolveTitle(from: path, explicitTitle: title)
+        print(
+            "[PlayerEngine] Loading sync:", path, "title:", self.mediaTitle, "startTime:", String(describing: startTime)
+        )
 
         // Save progress for previously active media if present
         saveCurrentPlaybackProgress()
@@ -635,6 +679,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         demuxer?.cancel()
         demuxer = nil
         pause()
+        mediaTitle = ""
         playbackState = .idle
     }
 
@@ -658,14 +703,8 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.duration = demuxer.durationSeconds
         self.videoWidth = demuxer.width
         self.videoHeight = demuxer.height
-        if path.hasPrefix("http://") || path.hasPrefix("https://") {
-            if let url = URL(string: path) {
-                self.mediaTitle = url.lastPathComponent.isEmpty ? url.host ?? path : url.lastPathComponent
-            } else {
-                self.mediaTitle = path
-            }
-        } else {
-            self.mediaTitle = URL(fileURLWithPath: path).lastPathComponent
+        if self.mediaTitle.isEmpty {
+            self.mediaTitle = Self.resolveTitle(from: path)
         }
         self.audioTracks = demuxer.audioTracks
         self.selectedAudioTrackId = demuxer.selectedAudioTrackIndex

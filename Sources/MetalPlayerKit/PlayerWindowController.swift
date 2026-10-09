@@ -79,9 +79,8 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
         engine.onTimeUpdate = { [weak self] current, dur in
             guard let self else { return }
             self.onTimeUpdate?(current, dur)
-            let title = self.window?.title ?? self.engine.mediaTitle
             self.nowPlayingController.update(
-                title: title,
+                title: self.engine.mediaTitle,
                 currentTime: current,
                 duration: dur,
                 isPlaying: self.engine.isPlaying
@@ -90,18 +89,17 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
         engine.onPlaybackStateChanged = { [weak self] state in
             guard let self else { return }
             self.onPlaybackStateChanged?(state)
-            let title = self.window?.title ?? self.engine.mediaTitle
             switch state {
             case .playing:
                 self.nowPlayingController.update(
-                    title: title,
+                    title: self.engine.mediaTitle,
                     currentTime: self.engine.currentTime,
                     duration: self.engine.duration,
                     isPlaying: true
                 )
             case .paused:
                 self.nowPlayingController.update(
-                    title: title,
+                    title: self.engine.mediaTitle,
                     currentTime: self.engine.currentTime,
                     duration: self.engine.duration,
                     isPlaying: false
@@ -121,19 +119,22 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
         fatalError("init(coder:) has not been implemented")
     }
 
-    public func openFile(url: URL, startTime: Double? = nil) {
-        openStream(url: url, headers: [:], startTime: startTime)
+    public func openFile(url: URL, title: String? = nil, startTime: Double? = nil) {
+        openStream(url: url, title: title, headers: [:], startTime: startTime)
     }
 
-    public func openStream(url: URL, headers: [String: String], startTime: Double? = nil) {
+    public func openStream(
+        url: URL,
+        title: String? = nil,
+        headers: [String: String] = [:],
+        startTime: Double? = nil
+    ) {
         let isNetwork = MediaDemuxer.isNetworkURL(url.absoluteString)
-        let resolvedTitle =
-            isNetwork
-            ? (url.lastPathComponent.isEmpty ? url.host ?? url.absoluteString : url.lastPathComponent)
-            : url.lastPathComponent
-        window?.title = resolvedTitle
         let pathString = isNetwork ? url.absoluteString : url.path
-        engine.load(path: pathString, headers: headers, startTime: startTime)
+
+        engine.load(path: pathString, title: title, headers: headers, startTime: startTime)
+        window?.title = engine.mediaTitle
+
         showWindow(nil)
         NSApp.activate()
         window?.makeKeyAndOrderFront(nil)
@@ -270,9 +271,8 @@ extension PlayerWindowController: PlayerActions {
     public func seekRelative(by seconds: Double) {
         engine.seekRelative(by: seconds)
         uiState.showControlsTemporarily()
-        let title = window?.title ?? engine.mediaTitle
         nowPlayingController.update(
-            title: title,
+            title: engine.mediaTitle,
             currentTime: engine.currentTime,
             duration: engine.duration,
             isPlaying: engine.isPlaying

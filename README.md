@@ -52,6 +52,7 @@ let controller = PlayerWindowController()
 // Stream remote media with custom auth headers and start from a specific second:
 controller.openStream(
     url: URL(string: "https://media.server/stream.mkv")!,
+    title: "Movie Title", // Optional; falls back to URL filename/host
     headers: ["Authorization": "Bearer secret_token"],
     startTime: 120.0 // Optional; overrides local resume history
 )
@@ -59,6 +60,7 @@ controller.openStream(
 // Open local media file:
 controller.openFile(
     url: fileURL,
+    title: "Movie Title", // Optional; defaults to file name
     startTime: nil // Pass nil to automatically resume from saved position (if enabled)
 )
 
