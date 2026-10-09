@@ -68,6 +68,163 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
     <string>15.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Video Media</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.movie</string>
+                <string>public.video</string>
+                <string>public.audiovisual-content</string>
+                <string>public.mpeg-4</string>
+                <string>com.apple.quicktime-movie</string>
+                <string>public.avi</string>
+                <string>org.matroska.mkv</string>
+                <string>org.webmproject.webm</string>
+            </array>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>mp4</string>
+                <string>mkv</string>
+                <string>mov</string>
+                <string>avi</string>
+                <string>webm</string>
+                <string>m4v</string>
+                <string>flv</string>
+                <string>wmv</string>
+                <string>ts</string>
+                <string>ogv</string>
+            </array>
+        </dict>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>Audio Media</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>public.audio</string>
+                <string>public.mp3</string>
+                <string>com.microsoft.waveform-audio</string>
+                <string>public.aiff-audio</string>
+                <string>org.xiph.flac</string>
+                <string>org.xiph.ogg</string>
+                <string>org.xiph.opus</string>
+            </array>
+            <key>CFBundleTypeExtensions</key>
+            <array>
+                <string>mp3</string>
+                <string>flac</string>
+                <string>wav</string>
+                <string>m4a</string>
+                <string>aac</string>
+                <string>ogg</string>
+                <string>opus</string>
+                <string>alac</string>
+                <string>aif</string>
+                <string>aiff</string>
+                <string>wma</string>
+                <string>ape</string>
+            </array>
+        </dict>
+    </array>
+    <key>UTImportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.matroska.mkv</string>
+            <key>UTTypeDescription</key>
+            <string>Matroska Video</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.movie</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>mkv</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.webmproject.webm</string>
+            <key>UTTypeDescription</key>
+            <string>WebM Video</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.movie</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>webm</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.xiph.flac</string>
+            <key>UTTypeDescription</key>
+            <string>FLAC Audio</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.audio</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>flac</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.xiph.ogg</string>
+            <key>UTTypeDescription</key>
+            <string>Ogg Audio</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.audio</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>ogg</string>
+                    <string>oga</string>
+                </array>
+            </dict>
+        </dict>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>org.xiph.opus</string>
+            <key>UTTypeDescription</key>
+            <string>Opus Audio</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.audio</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict>
+                <key>public.filename-extension</key>
+                <array>
+                    <string>opus</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>
@@ -76,6 +233,12 @@ EOF
 
 echo "==> Codesigning MetalPlayer.app..."
 codesign --force --deep -s - "$APP_DIR"
+
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+if [ -f "$LSREGISTER" ]; then
+    echo "==> Registering with LaunchServices..."
+    "$LSREGISTER" -f "$APP_DIR"
+fi
 
 echo "==> Done! App bundle created at $APP_DIR"
 if [ "$1" == "--run" ]; then

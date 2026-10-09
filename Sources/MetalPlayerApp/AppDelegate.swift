@@ -12,29 +12,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var activePlayer: (any PlayerActions)?
     private var welcomeWindowController: WelcomeWindowController?
     private(set) var playerWindowController: PlayerWindowController?
-    private var configuration = PlayerConfiguration()
+    private var configuration: PlayerConfiguration
+    private var initialMediaPath: String?
+    private var hasOpenedInitialMedia: Bool = false
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        setupAppIcon()
-
+    override init() {
         let baseConfig = PlayerConfiguration.loadFromUserDefaults()
         let parsed = PlayerConfiguration.parse(base: baseConfig)
         self.configuration = parsed.configuration
+        self.initialMediaPath = parsed.mediaPath
+        super.init()
+    }
 
-        if let mediaPath = parsed.mediaPath {
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        setupAppIcon()
+
+        if let mediaPath = initialMediaPath {
+            hasOpenedInitialMedia = true
             if MediaDemuxer.isNetworkURL(mediaPath), let url = URL(string: mediaPath) {
                 openStream(
-                    url: url, headers: parsed.configuration.httpHeaders, startTime: parsed.configuration.startTime,
-                    audioTrack: parsed.configuration.audioTrack, subtitleTrack: parsed.configuration.subtitleTrack)
-                NSApp.activate()
-                return
+                    url: url, headers: configuration.httpHeaders, startTime: configuration.startTime,
+                    audioTrack: configuration.audioTrack, subtitleTrack: configuration.subtitleTrack)
             } else if FileManager.default.fileExists(atPath: mediaPath) {
                 openMediaFile(
-                    at: URL(fileURLWithPath: mediaPath), startTime: parsed.configuration.startTime,
-                    audioTrack: parsed.configuration.audioTrack, subtitleTrack: parsed.configuration.subtitleTrack)
-                NSApp.activate()
-                return
+                    at: URL(fileURLWithPath: mediaPath), startTime: configuration.startTime,
+                    audioTrack: configuration.audioTrack, subtitleTrack: configuration.subtitleTrack)
             }
+        }
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if hasOpenedInitialMedia || isPlayerActive || playerWindowController != nil {
+            NSApp.activate()
+            return
         }
 
         showWelcomeWindow()
@@ -42,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showWelcomeWindow() {
+        guard !isPlayerActive && playerWindowController == nil else { return }
         isPlayerActive = false
         activePlayer = nil
         if welcomeWindowController == nil {
@@ -56,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         welcomeWindowController?.showWindow(nil)
         welcomeWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
     }
 
     func openMediaFile(at url: URL, startTime: Double? = nil, audioTrack: String? = nil, subtitleTrack: String? = nil) {
@@ -72,8 +84,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.isPlayerActive = false
                 self?.activePlayer = nil
                 self?.playerWindowController = nil
-                // When player window closes, return to welcome window if app is still running
-                self?.showWelcomeWindow()
             }
             controller.onKeyStatusChanged = { [weak self] isKey in
                 self?.activePlayer = isKey ? self?.playerWindowController : nil
@@ -82,7 +92,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Close/hide welcome window
+        welcomeWindowController?.window?.orderOut(nil)
         welcomeWindowController?.close()
+        welcomeWindowController = nil
 
         // Open stream or file in main player window
         playerWindowController?.openStream(
@@ -162,8 +174,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    func application(_ application: NSApplication, openFiles filenames: [String]) {
-        guard let firstFile = filenames.first else { return }
-        openMediaFile(at: URL(fileURLWithPath: firstFile))
+    func application(_ application: NSApplication, open urls: [URL]) {
+        hasOpenedInitialMedia = true
+        guard let firstURL = urls.first else { return }
+        if urls.count > 1 {
+            AppLog.info(
+                .engine, "Received \(urls.count) media URLs to open. Opening first: \(firstURL.lastPathComponent)")
+        }
+        if firstURL.isFileURL {
+            openMediaFile(at: firstURL)
+        } else {
+            openStream(url: firstURL, headers: [:])
+        }
     }
 }
