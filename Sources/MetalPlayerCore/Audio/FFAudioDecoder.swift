@@ -118,8 +118,26 @@ public final class FFAudioDecoder: @unchecked Sendable {
         }
     }
 
+    private var currentSrcChannels: Int32 = -1
+    private var currentSrcFormat: Int32 = -1
+    private var currentSrcRate: Int32 = -1
+
     private func initSwrIfNeeded(srcFrame: UnsafeMutablePointer<AVFrame>) -> Bool {
-        if swrCtx != nil { return true }
+        let frameChannels = srcFrame.pointee.ch_layout.nb_channels
+        let frameFormat = srcFrame.pointee.format
+        let frameRate = srcFrame.pointee.sample_rate
+
+        if swrCtx != nil && currentSrcChannels == frameChannels && currentSrcFormat == frameFormat
+            && currentSrcRate == frameRate
+        {
+            return true
+        }
+
+        if swrCtx != nil {
+            var p: OpaquePointer? = swrCtx
+            swr_free(&p)
+            self.swrCtx = nil
+        }
 
         var inChLayout = srcFrame.pointee.ch_layout
         var outChLayout = AVChannelLayout()
@@ -150,6 +168,9 @@ public final class FFAudioDecoder: @unchecked Sendable {
         }
 
         self.swrCtx = validSwr
+        self.currentSrcChannels = frameChannels
+        self.currentSrcFormat = frameFormat
+        self.currentSrcRate = frameRate
         return true
     }
 
@@ -200,26 +221,14 @@ public final class FFAudioDecoder: @unchecked Sendable {
             guard let outData = malloc(outBufferSize) else { continue }
 
             var outPtr: UnsafeMutablePointer<UInt8>? = outData.assumingMemoryBound(to: UInt8.self)
-            var inDataPointers: [UnsafePointer<UInt8>?] = []
-            withUnsafePointer(to: &avFrame.pointee.data) { dataArrayPtr in
-                let tuplePtr = UnsafeRawPointer(dataArrayPtr).assumingMemoryBound(to: UnsafeMutablePointer<UInt8>?.self)
-                for i in 0..<8 {
-                    if let ptr = tuplePtr[i] {
-                        inDataPointers.append(UnsafePointer(ptr))
-                    }
-                }
-            }
-
-            let convertedSamples = inDataPointers.withUnsafeBufferPointer { inBufPtr -> Int32 in
-                guard let base = inBufPtr.baseAddress else { return 0 }
-                return swr_convert(
-                    swr,
-                    &outPtr,
-                    maxOutSamples,
-                    base,
-                    avFrame.pointee.nb_samples
-                )
-            }
+            let inData = UnsafePointer<UnsafePointer<UInt8>?>(OpaquePointer(avFrame.pointee.extended_data))
+            let convertedSamples = swr_convert(
+                swr,
+                &outPtr,
+                maxOutSamples,
+                inData,
+                avFrame.pointee.nb_samples
+            )
 
             guard convertedSamples > 0 else {
                 free(outData)

@@ -190,6 +190,8 @@ public final class PlayerEngine: PlayerEngineProtocol {
     private var demuxer: MediaDemuxer?
     private let feedQueue = DispatchQueue(label: "com.nativeplayer.feed", qos: .userInteractive)
     private let audioFeedQueue = DispatchQueue(label: "com.nativeplayer.audiofeed", qos: .userInteractive)
+    private let seekQueue = DispatchQueue(label: "com.nativeplayer.seek", qos: .userInteractive)
+    private var currentSeekId: Int = 0
     private var audioConfigObserver: (any NSObjectProtocol)?
     private var audioAutoFlushObserver: (any NSObjectProtocol)?
     private var timeObserver: Any?
@@ -1270,20 +1272,36 @@ public final class PlayerEngine: PlayerEngineProtocol {
         updateActiveSubtitles(at: seconds)
         let targetTime = CMTime(seconds: seconds, preferredTimescale: 1000)
 
+        currentSeekId += 1
+        let seekId = currentSeekId
+
         let decoder = self.decoder
         let hasVideo = self.hasVideo
 
-        seekTask = Task.detached(priority: .userInitiated) { [weak self, demuxer, decoder] in
+        seekQueue.async { [weak self, demuxer, decoder] in
+            guard let self else { return }
+
+            // Early check: if a newer seek was scheduled, drop this one before touching decoder or demuxer
+            let isCurrentSeek = { @MainActor in
+                self.currentSeekId == seekId
+            }
+
+            if DispatchQueue.main.sync(execute: isCurrentSeek) == false {
+                return
+            }
+
             if hasVideo {
-                decoder.resetSession()
+                decoder.flush()
             }
             demuxer.seek(to: seconds)
 
-            guard !Task.isCancelled else { return }
+            if DispatchQueue.main.sync(execute: isCurrentSeek) == false {
+                return
+            }
 
             if wasPlaying {
-                await MainActor.run {
-                    guard let self, !Task.isCancelled else { return }
+                DispatchQueue.main.async {
+                    guard self.currentSeekId == seekId else { return }
                     self.startFeeding()
                     self.synchronizer.setRate(1.0, time: targetTime)
                     self.displayLink?.isPaused = !hasVideo
@@ -1295,12 +1313,16 @@ public final class PlayerEngine: PlayerEngineProtocol {
                     Self.seekPreview(
                         demuxer: demuxer,
                         decoder: decoder,
-                        seconds: seconds
+                        seconds: seconds,
+                        isCurrent: { [weak self] in
+                            guard let self else { return false }
+                            return DispatchQueue.main.sync { self.currentSeekId == seekId }
+                        }
                     )
                 }
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    guard let self, !Task.isCancelled else { return }
+                DispatchQueue.main.async {
+                    guard self.currentSeekId == seekId else { return }
+                    self.currentTime = seconds
                     self.synchronizer.setRate(0.0, time: targetTime)
                     if hasVideo {
                         self.renderCurrentFrame()
@@ -1314,11 +1336,12 @@ public final class PlayerEngine: PlayerEngineProtocol {
     private nonisolated static func seekPreview(
         demuxer: MediaDemuxer,
         decoder: VTVideoDecoder,
-        seconds: Double
+        seconds: Double,
+        isCurrent: () -> Bool
     ) {
         var attempts = 0
         var foundTarget = false
-        while attempts < 120 && !foundTarget && !Task.isCancelled {
+        while attempts < 120 && !foundTarget && isCurrent() {
             if let sample = demuxer.nextVideoSample() {
                 let pts = CMSampleBufferGetPresentationTimeStamp(sample)
                 decoder.decode(sampleBuffer: sample)

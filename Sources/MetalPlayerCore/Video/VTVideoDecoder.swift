@@ -4,6 +4,7 @@ import VideoToolbox
 import os
 
 public final class VTVideoDecoder: @unchecked Sendable {
+    private let lock = NSLock()
     private var session: VTDecompressionSession?
     private var currentFormatDescription: CMFormatDescription?
 
@@ -27,10 +28,15 @@ public final class VTVideoDecoder: @unchecked Sendable {
     public init() {}
 
     public func setOutputHandler(_ handler: @escaping OutputHandler) {
+        lock.lock()
+        defer { lock.unlock() }
         self.outputHandler = handler
     }
 
     public func decode(sampleBuffer: CMSampleBuffer) {
+        lock.lock()
+        defer { lock.unlock() }
+
         guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else {
             return
         }
@@ -148,26 +154,38 @@ public final class VTVideoDecoder: @unchecked Sendable {
     }
 
     public func flush() {
-        if let session {
-            VTDecompressionSessionWaitForAsynchronousFrames(session)
+        lock.lock()
+        let s = session
+        lock.unlock()
+        if let s {
+            VTDecompressionSessionWaitForAsynchronousFrames(s)
         }
     }
 
     /// Explicitly resets and invalidates the decompression session.
     /// Next decode call will create a fresh session, preventing hardware decoder deadlocks.
     public func resetSession() {
-        if let session {
-            VTDecompressionSessionInvalidate(session)
-            self.session = nil
-        }
+        lock.lock()
+        let oldSession = self.session
+        self.session = nil
         self.currentFormatDescription = nil
+        lock.unlock()
+
+        if let oldSession {
+            VTDecompressionSessionWaitForAsynchronousFrames(oldSession)
+            VTDecompressionSessionInvalidate(oldSession)
+        }
     }
 
     deinit {
+        lock.lock()
         outputHandler = nil
-        if let session {
-            VTDecompressionSessionWaitForAsynchronousFrames(session)
-            VTDecompressionSessionInvalidate(session)
+        let s = session
+        self.session = nil
+        lock.unlock()
+        if let s {
+            VTDecompressionSessionWaitForAsynchronousFrames(s)
+            VTDecompressionSessionInvalidate(s)
         }
     }
 }

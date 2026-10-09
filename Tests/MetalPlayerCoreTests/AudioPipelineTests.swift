@@ -7,12 +7,13 @@ import Testing
 
 @Suite("Audio Pipeline & FFAudioDecoder Tests")
 struct AudioPipelineTests {
+    private static func findReferenceMedia() -> String? {
+        return SyntheticTestMediaFactory.ensureMedia(preset: .multiTrackH264)
+    }
+
     @Test("MediaDemuxer discovers audio tracks from reference media")
     func testDemuxerAudioDiscovery() {
-        let referencePath = "/Users/ghotriw/w_hdm_full.mkv"
-        guard FileManager.default.fileExists(atPath: referencePath) else {
-            return
-        }
+        guard let referencePath = Self.findReferenceMedia() else { return }
 
         guard let demuxer = MediaDemuxer(url: referencePath) else {
             Issue.record("Failed to load reference file")
@@ -33,10 +34,7 @@ struct AudioPipelineTests {
 
     @Test("FFAudioDecoder decodes audio packets to 48kHz Stereo Float32 PCM sample buffers")
     func testFFAudioDecoderPlayback() {
-        let referencePath = "/Users/ghotriw/w_hdm_full.mkv"
-        guard FileManager.default.fileExists(atPath: referencePath) else {
-            return
-        }
+        guard let referencePath = Self.findReferenceMedia() else { return }
 
         guard let demuxer = MediaDemuxer(url: referencePath),
             let codecParams = demuxer.getAudioCodecParameters()
@@ -97,10 +95,7 @@ struct AudioPipelineTests {
 
     @Test("Audio track selection flushes and switches active stream")
     func testAudioTrackSelection() {
-        let referencePath = "/Users/ghotriw/w_hdm_full.mkv"
-        guard FileManager.default.fileExists(atPath: referencePath) else {
-            return
-        }
+        guard let referencePath = Self.findReferenceMedia() else { return }
 
         guard let demuxer = MediaDemuxer(url: referencePath) else {
             Issue.record("Failed to initialize demuxer")
@@ -116,6 +111,29 @@ struct AudioPipelineTests {
 
             demuxer.selectAudioTrack(trackId: firstId)
             #expect(demuxer.selectedAudioTrackIndex == firstId)
+        }
+    }
+
+    @Test("Audio decoding under repeated seeks and flushes")
+    func testAudioDecodingUnderContinuousSeeks() {
+        guard let referencePath = Self.findReferenceMedia(),
+            let demuxer = MediaDemuxer(url: referencePath),
+            let params = demuxer.getAudioCodecParameters(),
+            let decoder = FFAudioDecoder(codecParameters: params, timebase: demuxer.audioTimebase)
+        else {
+            return
+        }
+
+        for target in [10.0, 42.555, 120.0, 1.0, 50.0] {
+            decoder.flush()
+            demuxer.seek(to: target)
+            var count = 0
+            while count < 10 {
+                guard let pkt = demuxer.nextAudioPacket() else { break }
+                let bufs = decoder.decode(packetData: pkt.data, pts: pkt.pts, timebase: demuxer.audioTimebase)
+                #expect(bufs.count >= 0)
+                count += 1
+            }
         }
     }
 }

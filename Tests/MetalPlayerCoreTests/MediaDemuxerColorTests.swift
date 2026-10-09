@@ -8,7 +8,7 @@ import Testing
 struct MediaDemuxerColorTests {
     @Test("Demuxer properly extracts dynamic color metadata from reference video if present")
     func testDemuxerMetadataExtraction() {
-        let referencePath = "/Users/ghotriw/w_hdm_full.mkv"
+        guard let referencePath = SyntheticTestMediaFactory.ensureMedia(preset: .uhdHDRSubtitles) else { return }
         guard FileManager.default.fileExists(atPath: referencePath) else {
             return
         }
@@ -209,7 +209,7 @@ struct MediaDemuxerColorTests {
 
     @Test("Demuxer initializes with custom headers dictionary without breaking")
     func testDemuxerWithHeadersParameter() {
-        let referencePath = "/Users/ghotriw/w_hdm_full.mkv"
+        guard let referencePath = SyntheticTestMediaFactory.ensureMedia(preset: .uhdHDRSubtitles) else { return }
         guard FileManager.default.fileExists(atPath: referencePath) else { return }
 
         let headers = ["X-Custom-Token": "secret123", "User-Agent": "MetalPlayerTest"]

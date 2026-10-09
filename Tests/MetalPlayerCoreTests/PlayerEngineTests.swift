@@ -112,7 +112,7 @@ struct PlayerEngineTests {
     @Test("Engine loads reference media file if present")
     @MainActor
     func testLoadReferenceMedia() {
-        let referencePath = "/Users/ghotriw/w_hdm_full.mkv"
+        guard let referencePath = SyntheticTestMediaFactory.ensureMedia(preset: .uhdHDRSubtitles) else { return }
         guard FileManager.default.fileExists(atPath: referencePath) else {
             return
         }
@@ -124,10 +124,10 @@ struct PlayerEngineTests {
         #expect(engine.duration > 0.0)
         #expect(engine.videoWidth > 0)
         #expect(engine.videoHeight > 0)
-        #expect(engine.mediaTitle == "w_hdm_full.mkv")
+        #expect(engine.mediaTitle == URL(fileURLWithPath: referencePath).lastPathComponent)
         #expect(!engine.audioTracks.isEmpty)
 
-        // Subtitles verification: w_hdm_full.mkv contains 5 subrip tracks
+        // Subtitles verification: synthetic uhdHDRSubtitles media contains 5 subrip tracks
         #expect(engine.subtitleTracks.count == 5)
         #expect(engine.selectedSubtitleTrackId == nil)
 
@@ -213,7 +213,7 @@ struct PlayerEngineTests {
     @Test("Engine play restarts from start when in completed state")
     @MainActor
     func testPlayRestartsWhenCompleted() {
-        let referencePath = "/Users/ghotriw/w_hdm_full.mkv"
+        guard let referencePath = SyntheticTestMediaFactory.ensureMedia(preset: .uhdHDRSubtitles) else { return }
         guard FileManager.default.fileExists(atPath: referencePath) else {
             return
         }
@@ -278,7 +278,7 @@ struct PlayerEngineTests {
     @Test("PlayerEngine correctly loads and handles audio-only files without video")
     @MainActor
     func testAudioOnlyPlayback() {
-        let audioPath = "tmp/yt_aac_only.m4a"
+        guard let audioPath = SyntheticTestMediaFactory.ensureMedia(preset: .audioOnlyFLAC) else { return }
         guard FileManager.default.fileExists(atPath: audioPath) else { return }
 
         let engine = PlayerEngine()
@@ -313,9 +313,9 @@ struct PlayerEngineTests {
     @Test("Switching from video to audio-only file clears video state")
     @MainActor
     func testVideoToAudioSwitchClearsVideoState() {
-        let referenceVideoPath = "/Users/ghotriw/w_hdm_full.mkv"
-        let audioPath = "tmp/yt_aac_only.m4a"
-        guard FileManager.default.fileExists(atPath: referenceVideoPath),
+        guard let referenceVideoPath = SyntheticTestMediaFactory.ensureMedia(preset: .uhdHDRSubtitles) else { return }
+        guard let audioPath = SyntheticTestMediaFactory.ensureMedia(preset: .audioOnlyFLAC) else { return }
+        guard
             FileManager.default.fileExists(atPath: audioPath)
         else { return }
 
