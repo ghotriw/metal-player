@@ -1,4 +1,4 @@
-# Modern Apple Development Standards (macOS 14+ / Swift 6)
+# Modern Apple Development Standards (macOS 15+ / Swift 6)
 
 ## 1. Requirement to Verify APIs via Apple Docs
 - The `apple-docs` MCP server is available (`search_apple_docs`, `get_apple_doc_content`, `search_framework_symbols`, `get_platform_compatibility`).

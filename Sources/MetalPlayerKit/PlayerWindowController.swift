@@ -7,6 +7,7 @@ import SwiftUI
 public final class PlayerWindowController: NSWindowController, NSWindowDelegate {
     public let engine: PlayerEngine
     public let uiState = PlayerUIState()
+    public let nowPlayingController: any NowPlayingController
     public var onClose: (() -> Void)?
     public var onKeyStatusChanged: ((Bool) -> Void)?
 
@@ -28,7 +29,9 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
     }
 
     public init(configuration: PlayerConfiguration = PlayerConfiguration()) {
-        self.engine = PlayerEngine(configuration: configuration)
+        let engine = PlayerEngine(configuration: configuration)
+        self.engine = engine
+        self.nowPlayingController = NowPlayingControllerFactory.makeController(engine: engine)
         let window = PlayerWindow(
             contentRect: NSRect(x: 100, y: 100, width: 960, height: 540),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -37,6 +40,7 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
         )
 
         super.init(window: window)
+        nowPlayingController.actions = self
         window.actionHandler = self
 
         window.title = "MetalPlayer"
@@ -73,12 +77,42 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
         window.initialFirstResponder = hostingView
 
         engine.onTimeUpdate = { [weak self] current, dur in
-            self?.onTimeUpdate?(current, dur)
+            guard let self else { return }
+            self.onTimeUpdate?(current, dur)
+            let title = self.window?.title ?? self.engine.mediaTitle
+            self.nowPlayingController.update(
+                title: title,
+                currentTime: current,
+                duration: dur,
+                isPlaying: self.engine.isPlaying
+            )
         }
         engine.onPlaybackStateChanged = { [weak self] state in
-            self?.onPlaybackStateChanged?(state)
-            if state == .completed {
-                self?.onPlaybackEnded?()
+            guard let self else { return }
+            self.onPlaybackStateChanged?(state)
+            let title = self.window?.title ?? self.engine.mediaTitle
+            switch state {
+            case .playing:
+                self.nowPlayingController.update(
+                    title: title,
+                    currentTime: self.engine.currentTime,
+                    duration: self.engine.duration,
+                    isPlaying: true
+                )
+            case .paused:
+                self.nowPlayingController.update(
+                    title: title,
+                    currentTime: self.engine.currentTime,
+                    duration: self.engine.duration,
+                    isPlaying: false
+                )
+            case .idle, .failed, .completed:
+                self.nowPlayingController.clear()
+                if state == .completed {
+                    self.onPlaybackEnded?()
+                }
+            case .loading:
+                break
             }
         }
     }
@@ -93,10 +127,11 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
 
     public func openStream(url: URL, headers: [String: String], startTime: Double? = nil) {
         let isNetwork = MediaDemuxer.isNetworkURL(url.absoluteString)
-        window?.title =
+        let resolvedTitle =
             isNetwork
             ? (url.lastPathComponent.isEmpty ? url.host ?? url.absoluteString : url.lastPathComponent)
             : url.lastPathComponent
+        window?.title = resolvedTitle
         let pathString = isNetwork ? url.absoluteString : url.path
         engine.load(path: pathString, headers: headers, startTime: startTime)
         showWindow(nil)
@@ -150,10 +185,12 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
             window?.makeFirstResponder(contentView)
         }
         onKeyStatusChanged?(true)
+        nowPlayingController.isKeyWindow = true
     }
 
     public func windowDidResignKey(_ notification: Notification) {
         onKeyStatusChanged?(false)
+        nowPlayingController.isKeyWindow = false
     }
 
     public func windowWillEnterFullScreen(_ notification: Notification) {
@@ -184,6 +221,9 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
     }
 
     public func windowWillClose(_ notification: Notification) {
+        engine.onPlaybackStateChanged = nil
+        engine.onTimeUpdate = nil
+        nowPlayingController.clear()
         engine.stop()
         onClose?()
     }
@@ -232,6 +272,13 @@ extension PlayerWindowController: PlayerActions {
     public func seekRelative(by seconds: Double) {
         engine.seekRelative(by: seconds)
         uiState.showControlsTemporarily()
+        let title = window?.title ?? engine.mediaTitle
+        nowPlayingController.update(
+            title: title,
+            currentTime: engine.currentTime,
+            duration: engine.duration,
+            isPlaying: engine.isPlaying
+        )
     }
 
     public func stepVolume(by delta: Float) {

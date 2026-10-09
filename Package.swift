@@ -55,5 +55,10 @@ let package = Package(
             dependencies: ["MetalPlayerCore"],
             swiftSettings: defaultSwiftSettings
         ),
+        .testTarget(
+            name: "MetalPlayerKitTests",
+            dependencies: ["MetalPlayerKit"],
+            swiftSettings: defaultSwiftSettings
+        ),
     ]
 )
