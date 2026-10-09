@@ -8,7 +8,8 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
     public let engine: PlayerEngine
     public let uiState = PlayerUIState()
     public let nowPlayingController: any NowPlayingController
-    public var onClose: (() -> Void)?
+    /// Callback triggered before player window closes: (finalTime, duration)
+    public var onClose: ((_ finalTime: Double, _ duration: Double) -> Void)?
     public var onKeyStatusChanged: ((Bool) -> Void)?
 
     /// Periodic time observer callback: (currentTime, duration)
@@ -284,10 +285,15 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
     }
 
     public func windowWillClose(_ notification: Notification) {
-        AppLog.info(.ui, "Player window closing for: '\(engine.mediaTitle)'")
+        let finalTime = engine.currentTime
+        let finalDuration = engine.duration
+        AppLog.info(
+            .ui,
+            "Player window closing for: '\(engine.mediaTitle)' at \(String(format: "%.2f", finalTime))s / \(String(format: "%.2f", finalDuration))s"
+        )
+        onClose?(finalTime, finalDuration)
         nowPlayingController.clear()
         engine.stop()
-        onClose?()
     }
 }
 

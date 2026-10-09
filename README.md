@@ -79,8 +79,8 @@ controller.onPlaybackEnded = {
     // Media finished playing to the end
 }
 
-controller.onClose = {
-    // Window was closed by user
+controller.onClose = { finalTime, duration in
+    // Window was closed by user; provides final playback time and duration before stop()
 }
 ```
 

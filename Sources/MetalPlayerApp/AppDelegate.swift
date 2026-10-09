@@ -62,7 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func openStream(url: URL, headers: [String: String], startTime: Double? = nil) {
         if playerWindowController == nil {
             let controller = PlayerWindowController(configuration: configuration)
-            controller.onClose = { [weak self] in
+            controller.onClose = { [weak self] _, _ in
                 self?.isPlayerActive = false
                 self?.activePlayer = nil
                 self?.playerWindowController = nil
