@@ -33,6 +33,8 @@ public final class PlayerEngine: PlayerEngineProtocol {
     private var currentInterruptContext: MediaDemuxer.InterruptContext?
     private var currentLoadID = UUID()
     public var mediaTitle: String = ""
+    public var artworkData: Data? = nil
+    public var artworkURL: URL? = nil
     public var videoWidth: Int = 0
     public var videoHeight: Int = 0
     public var renderMode: RenderMode = .auto {
@@ -539,15 +541,49 @@ public final class PlayerEngine: PlayerEngineProtocol {
         headers: [String: String] = [:],
         startTime: Double? = nil
     ) {
+        load(
+            path: path,
+            title: title,
+            artworkData: nil,
+            artworkURL: nil,
+            headers: headers,
+            startTime: startTime
+        )
+    }
+
+    public func load(
+        path: String,
+        title: String?,
+        artworkData: Data?,
+        artworkURL: URL?,
+        headers: [String: String] = [:],
+        startTime: Double? = nil
+    ) {
         self.mediaTitle = Self.resolveTitle(from: path, explicitTitle: title)
+        self.artworkData = artworkData
+        self.artworkURL = artworkURL
         let isNetwork = MediaDemuxer.isNetworkURL(path)
         if isNetwork {
             loadingTask?.cancel()
             loadingTask = Task { @MainActor [weak self] in
-                await self?.loadAsync(path: path, title: title, headers: headers, startTime: startTime)
+                await self?.loadAsync(
+                    path: path,
+                    title: title,
+                    artworkData: artworkData,
+                    artworkURL: artworkURL,
+                    headers: headers,
+                    startTime: startTime
+                )
             }
         } else {
-            loadSync(path: path, title: title, headers: headers, startTime: startTime)
+            loadSync(
+                path: path,
+                title: title,
+                artworkData: artworkData,
+                artworkURL: artworkURL,
+                headers: headers,
+                startTime: startTime
+            )
         }
     }
 
@@ -569,7 +605,27 @@ public final class PlayerEngine: PlayerEngineProtocol {
         headers: [String: String] = [:],
         startTime: Double? = nil
     ) async {
+        await loadAsync(
+            path: path,
+            title: title,
+            artworkData: nil,
+            artworkURL: nil,
+            headers: headers,
+            startTime: startTime
+        )
+    }
+
+    public func loadAsync(
+        path: String,
+        title: String?,
+        artworkData: Data?,
+        artworkURL: URL?,
+        headers: [String: String] = [:],
+        startTime: Double? = nil
+    ) async {
         self.mediaTitle = Self.resolveTitle(from: path, explicitTitle: title)
+        self.artworkData = artworkData
+        self.artworkURL = artworkURL
         print(
             "[PlayerEngine] Loading async:", path, "title:", self.mediaTitle, "with headers count:", headers.count,
             "startTime:",
@@ -629,8 +685,17 @@ public final class PlayerEngine: PlayerEngineProtocol {
         applyLoadedDemuxer(demuxer, path: path, headers: headers, requestedStartTime: startTime)
     }
 
-    private func loadSync(path: String, title: String?, headers: [String: String], startTime: Double?) {
+    private func loadSync(
+        path: String,
+        title: String?,
+        artworkData: Data?,
+        artworkURL: URL?,
+        headers: [String: String],
+        startTime: Double?
+    ) {
         self.mediaTitle = Self.resolveTitle(from: path, explicitTitle: title)
+        self.artworkData = artworkData
+        self.artworkURL = artworkURL
         print(
             "[PlayerEngine] Loading sync:", path, "title:", self.mediaTitle, "startTime:", String(describing: startTime)
         )
@@ -680,6 +745,8 @@ public final class PlayerEngine: PlayerEngineProtocol {
         demuxer = nil
         pause()
         mediaTitle = ""
+        artworkData = nil
+        artworkURL = nil
         playbackState = .idle
     }
 
@@ -705,6 +772,10 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.videoHeight = demuxer.height
         if self.mediaTitle.isEmpty {
             self.mediaTitle = Self.resolveTitle(from: path)
+        }
+        // Fall back to embedded container artwork if no explicit artwork data was provided
+        if self.artworkData == nil, let embedded = demuxer.embeddedArtworkData {
+            self.artworkData = embedded
         }
         self.audioTracks = demuxer.audioTracks
         self.selectedAudioTrackId = demuxer.selectedAudioTrackIndex

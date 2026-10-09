@@ -27,6 +27,7 @@ public final class MediaDemuxer: @unchecked Sendable {
     public private(set) var audioTracks: [AudioTrack] = []
     public private(set) var selectedAudioTrackIndex: Int = -1
     public private(set) var audioExtraData: Data? = nil
+    public private(set) var embeddedArtworkData: Data? = nil
 
     public private(set) var subtitleTracks: [SubtitleTrack] = []
     public private(set) var selectedSubtitleTrackId: Int? = nil
@@ -640,6 +641,16 @@ public final class MediaDemuxer: @unchecked Sendable {
                         isSDH: isSDH
                     )
                     self.subtitleTracks.append(subTrack)
+                }
+            }
+
+            // Extract embedded artwork (cover art / attached picture) if present
+            if (stream.pointee.disposition & AV_DISPOSITION_ATTACHED_PIC) != 0,
+                self.embeddedArtworkData == nil
+            {
+                let attachedPic = stream.pointee.attached_pic
+                if let picData = attachedPic.data, attachedPic.size > 0 {
+                    self.embeddedArtworkData = Data(bytes: picData, count: Int(attachedPic.size))
                 }
             }
         }

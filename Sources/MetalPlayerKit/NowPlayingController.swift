@@ -14,8 +14,28 @@ import Observation
 public protocol NowPlayingController: AnyObject {
     var actions: (any PlayerActions)? { get set }
     var isKeyWindow: Bool { get set }
-    func update(title: String, currentTime: Double, duration: Double, isPlaying: Bool)
+    func update(
+        title: String,
+        currentTime: Double,
+        duration: Double,
+        isPlaying: Bool,
+        artworkData: Data?,
+        artworkURL: URL?
+    )
     func clear()
+}
+
+extension NowPlayingController {
+    public func update(title: String, currentTime: Double, duration: Double, isPlaying: Bool) {
+        update(
+            title: title,
+            currentTime: currentTime,
+            duration: duration,
+            isPlaying: isPlaying,
+            artworkData: nil,
+            artworkURL: nil
+        )
+    }
 }
 
 /// Factory that selects the appropriate Now Playing implementation:
@@ -33,6 +53,34 @@ public enum NowPlayingControllerFactory {
             }
         #endif
         return LegacyMediaPlayerController(engine: engine, actions: actions)
+    }
+}
+
+// MARK: - Artwork Image Cache & Loader
+
+actor NowPlayingArtworkLoader {
+    static let shared = NowPlayingArtworkLoader()
+    private let cache = NSCache<NSURL, NSData>()
+
+    init(countLimit: Int = 50, totalCostLimit: Int = 50 * 1024 * 1024) {
+        cache.countLimit = countLimit
+        cache.totalCostLimit = totalCostLimit
+    }
+
+    func load(from url: URL) async -> Data? {
+        let key = url as NSURL
+        if let cached = cache.object(forKey: key) {
+            return cached as Data
+        }
+        guard let (data, response) = try? await URLSession.shared.data(from: url),
+            let http = response as? HTTPURLResponse,
+            http.statusCode >= 200 && http.statusCode < 300,
+            !data.isEmpty
+        else {
+            return nil
+        }
+        cache.setObject(data as NSData, forKey: key, cost: data.count)
+        return data
     }
 }
 
@@ -114,6 +162,7 @@ public struct NowPlayingThrottler: Sendable {
         public var currentTime: Double = 0
         public var duration: Double = 0
         public var isPlaying: Bool = false
+        public var rawArtworkData: Data? = nil
 
         public var onTogglePlayPause: (() -> Void)?
         public var onPlay: (() -> Void)?
@@ -127,11 +176,31 @@ public struct NowPlayingThrottler: Sendable {
 
         public var content: (any MediaContentRepresentable)? {
             guard !title.isEmpty else { return nil }
+            let artwork: NowPlaying.Artwork?
+            if let rawArtworkData {
+                artwork = NowPlaying.Artwork(id: "\(id)-\(rawArtworkData.count)") { _ in
+                    // NowPlaying.ArtworkRepresentation currently requires JPEG encoded image data
+                    if let directRep = try? ArtworkRepresentation(data: rawArtworkData) {
+                        return directRep
+                    }
+                    if let image = NSImage(data: rawArtworkData),
+                        let tiff = image.tiffRepresentation,
+                        let rep = NSBitmapImageRep(data: tiff),
+                        let jpegData = rep.representation(using: .jpeg, properties: [:])
+                    {
+                        return try ArtworkRepresentation(data: jpegData)
+                    }
+                    throw ArtworkRepresentation.ArtworkRepresentationError.noRepresentationAvailable
+                }
+            } else {
+                artwork = nil
+            }
+
             return MovieContent(
                 id: title,
                 title: title,
                 duration: duration > 0 ? .finite(duration) : nil,
-                artwork: nil
+                artwork: artwork
             )
         }
 
@@ -180,7 +249,9 @@ public struct NowPlayingThrottler: Sendable {
         private weak var engine: (any PlayerEngineProtocol)?
         private var session: MediaSession<ModernNowPlayingModel>?
         private var activationTask: Task<Void, Never>?
+        private var artworkFetchTask: Task<Void, Never>?
         private var throttler = NowPlayingThrottler()
+        private var currentArtworkURL: URL?
 
         public init(
             engine: any PlayerEngineProtocol,
@@ -241,11 +312,20 @@ public struct NowPlayingThrottler: Sendable {
             }
         }
 
-        public func update(title: String, currentTime: Double, duration: Double, isPlaying: Bool) {
+        public func update(
+            title: String,
+            currentTime: Double,
+            duration: Double,
+            isPlaying: Bool,
+            artworkData: Data?,
+            artworkURL: URL?
+        ) {
             guard !title.isEmpty else {
                 clear()
                 return
             }
+
+            resolveArtwork(data: artworkData, url: artworkURL)
 
             guard
                 throttler.shouldUpdate(
@@ -264,6 +344,38 @@ public struct NowPlayingThrottler: Sendable {
             model.isPlaying = isPlaying
 
             ensureActiveSession()
+        }
+
+        private func resolveArtwork(data: Data?, url: URL?) {
+            if let data {
+                if model.rawArtworkData != data {
+                    model.rawArtworkData = data
+                }
+                artworkFetchTask?.cancel()
+                artworkFetchTask = nil
+                currentArtworkURL = nil
+                return
+            }
+
+            guard let url else {
+                return
+            }
+
+            if currentArtworkURL == url {
+                return
+            }
+            currentArtworkURL = url
+
+            artworkFetchTask?.cancel()
+            artworkFetchTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                let fetchedData = await NowPlayingArtworkLoader.shared.load(from: url)
+                guard !Task.isCancelled, self.currentArtworkURL == url else { return }
+                if let fetchedData {
+                    self.model.rawArtworkData = fetchedData
+                }
+                self.artworkFetchTask = nil
+            }
         }
 
         private func ensureActiveSession() {
@@ -287,8 +399,12 @@ public struct NowPlayingThrottler: Sendable {
         public func clear() {
             activationTask?.cancel()
             activationTask = nil
+            artworkFetchTask?.cancel()
+            artworkFetchTask = nil
+            currentArtworkURL = nil
 
             model.title = ""
+            model.rawArtworkData = nil
             model.isPlaying = false
             throttler.reset()
 
@@ -314,6 +430,9 @@ public final class LegacyMediaPlayerController: NowPlayingController {
     private weak var engine: (any PlayerEngineProtocol)?
     private var targets: [(command: MPRemoteCommand, target: Any)] = []
     private var throttler = NowPlayingThrottler()
+    private var rawArtworkData: Data?
+    private var currentArtworkURL: URL?
+    private var artworkFetchTask: Task<Void, Never>?
 
     public init(
         engine: any PlayerEngineProtocol,
@@ -425,11 +544,20 @@ public final class LegacyMediaPlayerController: NowPlayingController {
         center.skipBackwardCommand.isEnabled = isActive
     }
 
-    public func update(title: String, currentTime: Double, duration: Double, isPlaying: Bool) {
+    public func update(
+        title: String,
+        currentTime: Double,
+        duration: Double,
+        isPlaying: Bool,
+        artworkData: Data?,
+        artworkURL: URL?
+    ) {
         guard !title.isEmpty else {
             clear()
             return
         }
+
+        resolveArtwork(data: artworkData, url: artworkURL)
 
         guard
             throttler.shouldUpdate(
@@ -448,6 +576,53 @@ public final class LegacyMediaPlayerController: NowPlayingController {
             duration: duration,
             isPlaying: isPlaying
         )
+    }
+
+    private func resolveArtwork(data: Data?, url: URL?) {
+        if let data {
+            let changed = (self.rawArtworkData != data)
+            self.rawArtworkData = data
+            artworkFetchTask?.cancel()
+            artworkFetchTask = nil
+            currentArtworkURL = nil
+            if changed && isActive {
+                forceUpdateNowPlayingInfo(
+                    title: throttler.lastReportedTitle,
+                    currentTime: throttler.lastReportedTime,
+                    duration: engine?.duration ?? 0,
+                    isPlaying: throttler.lastReportedIsPlaying ?? false
+                )
+            }
+            return
+        }
+
+        guard let url else {
+            return
+        }
+
+        if currentArtworkURL == url {
+            return
+        }
+        currentArtworkURL = url
+
+        artworkFetchTask?.cancel()
+        artworkFetchTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let fetchedData = await NowPlayingArtworkLoader.shared.load(from: url)
+            guard !Task.isCancelled, self.currentArtworkURL == url else { return }
+            if let fetchedData {
+                self.rawArtworkData = fetchedData
+                if self.isActive {
+                    self.forceUpdateNowPlayingInfo(
+                        title: self.throttler.lastReportedTitle,
+                        currentTime: self.throttler.lastReportedTime,
+                        duration: self.engine?.duration ?? 0,
+                        isPlaying: self.throttler.lastReportedIsPlaying ?? false
+                    )
+                }
+            }
+            self.artworkFetchTask = nil
+        }
     }
 
     private func forceUpdateNowPlayingInfo(
@@ -472,6 +647,13 @@ public final class LegacyMediaPlayerController: NowPlayingController {
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
         info[MPNowPlayingInfoPropertyDefaultPlaybackRate] = 1.0
 
+        if let rawArtworkData, let image = NSImage(data: rawArtworkData) {
+            let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in
+                image
+            }
+            info[MPMediaItemPropertyArtwork] = artwork
+        }
+
         let center = MPNowPlayingInfoCenter.default()
         center.nowPlayingInfo = info
 
@@ -481,6 +663,10 @@ public final class LegacyMediaPlayerController: NowPlayingController {
 
     public func clear() {
         isActive = false
+        artworkFetchTask?.cancel()
+        artworkFetchTask = nil
+        currentArtworkURL = nil
+        rawArtworkData = nil
         throttler.reset()
 
         let center = MPNowPlayingInfoCenter.default()

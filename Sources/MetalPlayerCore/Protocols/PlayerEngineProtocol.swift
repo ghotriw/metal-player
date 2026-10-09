@@ -30,6 +30,8 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor var isLoading: Bool { get }
     @MainActor var loadError: String? { get }
     @MainActor var mediaTitle: String { get set }
+    @MainActor var artworkData: Data? { get }
+    @MainActor var artworkURL: URL? { get }
     @MainActor var videoWidth: Int { get }
     @MainActor var videoHeight: Int { get }
 
@@ -65,10 +67,26 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor func load(path: String, title: String?)
     @MainActor func load(path: String, headers: [String: String])
     @MainActor func load(path: String, title: String?, headers: [String: String], startTime: Double?)
+    @MainActor func load(
+        path: String,
+        title: String?,
+        artworkData: Data?,
+        artworkURL: URL?,
+        headers: [String: String],
+        startTime: Double?
+    )
     @MainActor func loadAsync(path: String) async
     @MainActor func loadAsync(path: String, title: String?) async
     @MainActor func loadAsync(path: String, headers: [String: String]) async
     @MainActor func loadAsync(path: String, title: String?, headers: [String: String], startTime: Double?) async
+    @MainActor func loadAsync(
+        path: String,
+        title: String?,
+        artworkData: Data?,
+        artworkURL: URL?,
+        headers: [String: String],
+        startTime: Double?
+    ) async
     @MainActor func stop()
     @MainActor func play()
     @MainActor func pause()

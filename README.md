@@ -49,18 +49,20 @@ import MetalPlayerKit
 
 let controller = PlayerWindowController()
 
-// Stream remote media with custom auth headers and start from a specific second:
+// Stream remote media with custom auth headers, title, poster, and start time:
 controller.openStream(
     url: URL(string: "https://media.server/stream.mkv")!,
     title: "Movie Title", // Optional; falls back to URL filename/host
+    artworkURL: URL(string: "https://media.server/poster.jpg"), // Optional; displayed in Now Playing / Control Center
     headers: ["Authorization": "Bearer secret_token"],
     startTime: 120.0 // Optional; overrides local resume history
 )
 
-// Open local media file:
+// Open local media file (automatically extracts embedded cover art or accepts explicit artwork):
 controller.openFile(
     url: fileURL,
     title: "Movie Title", // Optional; defaults to file name
+    artworkData: nil, // Optional; falls back to embedded file artwork (MP4 covr / MKV attachment / ID3)
     startTime: nil // Pass nil to automatically resume from saved position (if enabled)
 )
 

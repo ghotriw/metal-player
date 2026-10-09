@@ -45,7 +45,19 @@ struct NowPlayingTests {
         let seekedInfo = try #require(center.nowPlayingInfo)
         #expect(seekedInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double == 120.0)
 
-        // 5. Clear resets everything
+        // 5. Artwork update
+        let testImageData = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])  // PNG header bytes
+        legacy.update(
+            title: "Inception",
+            currentTime: 125.0,
+            duration: 8880.0,
+            isPlaying: false,
+            artworkData: testImageData,
+            artworkURL: nil
+        )
+        // Verify update completes without error
+
+        // 6. Clear resets everything
         legacy.clear()
         #expect(center.nowPlayingInfo == nil)
         #expect(center.playbackState == .stopped)
@@ -84,6 +96,11 @@ struct NowPlayingTests {
 
             let content = try #require(model.content as? MovieContent)
             #expect(content.title == "Interstellar")
+            #expect(content.artwork == nil)
+
+            model.rawArtworkData = Data([0x01, 0x02, 0x03])
+            let contentWithArtwork = try #require(model.content as? MovieContent)
+            #expect(contentWithArtwork.artwork != nil)
 
             let snapshot = try #require(model.playbackSnapshot)
             _ = snapshot

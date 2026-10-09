@@ -83,7 +83,9 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
                 title: self.engine.mediaTitle,
                 currentTime: current,
                 duration: dur,
-                isPlaying: self.engine.isPlaying
+                isPlaying: self.engine.isPlaying,
+                artworkData: self.engine.artworkData,
+                artworkURL: self.engine.artworkURL
             )
         }
         engine.onPlaybackStateChanged = { [weak self] state in
@@ -95,14 +97,18 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
                     title: self.engine.mediaTitle,
                     currentTime: self.engine.currentTime,
                     duration: self.engine.duration,
-                    isPlaying: true
+                    isPlaying: true,
+                    artworkData: self.engine.artworkData,
+                    artworkURL: self.engine.artworkURL
                 )
             case .paused:
                 self.nowPlayingController.update(
                     title: self.engine.mediaTitle,
                     currentTime: self.engine.currentTime,
                     duration: self.engine.duration,
-                    isPlaying: false
+                    isPlaying: false,
+                    artworkData: self.engine.artworkData,
+                    artworkURL: self.engine.artworkURL
                 )
             case .idle, .failed, .completed:
                 self.nowPlayingController.clear()
@@ -119,20 +125,42 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
         fatalError("init(coder:) has not been implemented")
     }
 
-    public func openFile(url: URL, title: String? = nil, startTime: Double? = nil) {
-        openStream(url: url, title: title, headers: [:], startTime: startTime)
+    public func openFile(
+        url: URL,
+        title: String? = nil,
+        artworkData: Data? = nil,
+        artworkURL: URL? = nil,
+        startTime: Double? = nil
+    ) {
+        openStream(
+            url: url,
+            title: title,
+            artworkData: artworkData,
+            artworkURL: artworkURL,
+            headers: [:],
+            startTime: startTime
+        )
     }
 
     public func openStream(
         url: URL,
         title: String? = nil,
+        artworkData: Data? = nil,
+        artworkURL: URL? = nil,
         headers: [String: String] = [:],
         startTime: Double? = nil
     ) {
         let isNetwork = MediaDemuxer.isNetworkURL(url.absoluteString)
         let pathString = isNetwork ? url.absoluteString : url.path
 
-        engine.load(path: pathString, title: title, headers: headers, startTime: startTime)
+        engine.load(
+            path: pathString,
+            title: title,
+            artworkData: artworkData,
+            artworkURL: artworkURL,
+            headers: headers,
+            startTime: startTime
+        )
         window?.title = engine.mediaTitle
 
         showWindow(nil)
