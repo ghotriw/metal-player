@@ -90,18 +90,23 @@ flowchart TD
 - [x] **2.4. App Bundle Lifecycle & System Integration:**
   - Build and ad-hoc sign `MetalPlayer.app` with `CFBundleIdentifier` (`com.ghotriw.metalplayer`) via `scripts/bundle_app.sh`, enabling macOS Control Center integration.
   - Implement native window controller and `AppDelegate` with `applicationShouldTerminateAfterLastWindowClosed = true` and standard macOS menu shortcuts (`⌘Q`, `⌘W`, `⌘O`).
+- [x] **2.5. System Media Controls & Now Playing Integration:**
+  - Dual-backend architecture: modern `NowPlaying.framework` (`MediaSession` on macOS 27+) and backward-compatible `MediaPlayer` (`MPNowPlayingInfoCenter` / `MPRemoteCommandCenter`).
+  - Remote command handling: Play, Pause, Toggle, Seek/Scrub, and Skip.
+  - Hardware & accessory support: Control Center, Menu Bar "Now Playing", keyboard media keys, Touch Bar, and Bluetooth headphones/headsets.
+  - Safe timeline extrapolation and seamless window reopen lifecycle.
 
 ---
 
-### Stage 2.5: AV1 Hybrid Engine (AOMedia Video 1)
+### Stage 2.6: AV1 Hybrid Engine (AOMedia Video 1)
 > Apple Silicon M1/M2 chips lack hardware AV1 decoders (introduced in M3/M4+), necessitating a hybrid fallback.
 
-- **2.5.1. Decoder Protocol Abstraction (`VideoDecoderProtocol`):**
+- **2.6.1. Decoder Protocol Abstraction (`VideoDecoderProtocol`):**
   - Common decoder interface enabling transparent switching between hardware `VTVideoDecoder` and software backends.
-- **2.5.2. M3/M4+ Hardware Path (VideoToolbox):**
+- **2.6.2. M3/M4+ Hardware Path (VideoToolbox):**
   - Check `VTIsHardwareDecodeSupported(kCMVideoCodecType_AV1)`.
   - Parse `av1C` config atoms and OBUs (Open Bitstream Units).
-- **2.5.3. M1/M2 Software Path (`libdav1d`):**
+- **2.6.3. M1/M2 Software Path (`libdav1d`):**
   - Integrate high-performance SIMD/NEON assembly decoder `dav1d` (VideoLAN).
   - Direct zero-copy or fast mapping of `dav1d_data` YUV420P buffers into `CVPixelBuffer` for Metal / DisplayLayer rendering.
 

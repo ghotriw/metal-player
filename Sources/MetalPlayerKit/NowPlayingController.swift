@@ -36,6 +36,70 @@ public enum NowPlayingControllerFactory {
     }
 }
 
+// MARK: - Throttler & Update Detection
+
+/// Encapsulates throttling and update-detection logic for system Now Playing updates.
+/// Filters out frequent 0.1s tick updates during normal 1x playback (allowing system timeline
+/// extrapolation to run smoothly) while immediately forwarding play/pause state changes,
+/// seek jumps (>1.5s difference from expected position), and periodic heartbeat refreshes (>=5s).
+public struct NowPlayingThrottler: Sendable {
+    public private(set) var lastReportedTime: Double = -1
+    public private(set) var lastReportedTitle: String = ""
+    public private(set) var lastReportedIsPlaying: Bool? = nil
+    public private(set) var lastReportedDate: Date = .distantPast
+
+    public init() {}
+
+    /// Determines if an update should be dispatched to the system.
+    /// If returning `true`, the internal state is updated to the provided values.
+    public mutating func shouldUpdate(
+        title: String,
+        currentTime: Double,
+        duration: Double,
+        isPlaying: Bool,
+        now: Date = Date()
+    ) -> Bool {
+        guard !title.isEmpty else { return false }
+
+        let isStateChange = (isPlaying != lastReportedIsPlaying) || (title != lastReportedTitle)
+        let elapsed = now.timeIntervalSince(lastReportedDate)
+        let expectedTime =
+            lastReportedTime >= 0
+            ? lastReportedTime + (lastReportedIsPlaying == true ? elapsed : 0)
+            : currentTime
+        let isSeeking = abs(currentTime - expectedTime) > 1.5
+        let isHeartbeat = elapsed >= 5.0
+
+        guard isStateChange || isSeeking || isHeartbeat else {
+            return false
+        }
+
+        forceRecord(title: title, currentTime: currentTime, isPlaying: isPlaying, now: now)
+        return true
+    }
+
+    /// Explicitly updates recorded state (e.g. following an immediate user seek command).
+    public mutating func forceRecord(
+        title: String,
+        currentTime: Double,
+        isPlaying: Bool,
+        now: Date = Date()
+    ) {
+        lastReportedTitle = title
+        lastReportedTime = currentTime
+        lastReportedIsPlaying = isPlaying
+        lastReportedDate = now
+    }
+
+    /// Resets all tracked state.
+    public mutating func reset() {
+        lastReportedTitle = ""
+        lastReportedTime = -1
+        lastReportedIsPlaying = nil
+        lastReportedDate = .distantPast
+    }
+}
+
 // MARK: - Modern Implementation (macOS 27.0+)
 
 #if canImport(NowPlaying)
@@ -116,11 +180,7 @@ public enum NowPlayingControllerFactory {
         private weak var engine: (any PlayerEngineProtocol)?
         private var session: MediaSession<ModernNowPlayingModel>?
         private var activationTask: Task<Void, Never>?
-
-        private var lastReportedTime: Double = -1
-        private var lastReportedIsPlaying: Bool? = nil
-        private var lastReportedTitle: String = ""
-        private var lastReportedDate: Date = .distantPast
+        private var throttler = NowPlayingThrottler()
 
         public init(
             engine: any PlayerEngineProtocol,
@@ -143,20 +203,12 @@ public enum NowPlayingControllerFactory {
 
             model.onPlay = { [weak self] in
                 guard let self else { return }
-                if let actions = self.actions, !(self.engine?.isPlaying ?? false) {
-                    actions.togglePlayPause()
-                } else {
-                    self.engine?.play()
-                }
+                self.engine?.play()
             }
 
             model.onPause = { [weak self] in
                 guard let self else { return }
-                if let actions = self.actions, self.engine?.isPlaying ?? false {
-                    actions.togglePlayPause()
-                } else {
-                    self.engine?.pause()
-                }
+                self.engine?.pause()
             }
 
             model.onSeekToPosition = { [weak self] seconds in
@@ -164,8 +216,11 @@ public enum NowPlayingControllerFactory {
                 self.engine?.seek(to: seconds)
                 // Immediately sync model currentTime so the scrubber doesn't snap back when paused
                 self.model.currentTime = seconds
-                self.lastReportedTime = seconds
-                self.lastReportedDate = Date()
+                self.throttler.forceRecord(
+                    title: self.throttler.lastReportedTitle,
+                    currentTime: seconds,
+                    isPlaying: self.model.isPlaying
+                )
             }
 
             model.onSkip = { [weak self] delta in
@@ -177,8 +232,11 @@ public enum NowPlayingControllerFactory {
                 }
                 if let engine = self.engine {
                     self.model.currentTime = engine.currentTime
-                    self.lastReportedTime = engine.currentTime
-                    self.lastReportedDate = Date()
+                    self.throttler.forceRecord(
+                        title: self.throttler.lastReportedTitle,
+                        currentTime: engine.currentTime,
+                        isPlaying: self.model.isPlaying
+                    )
                 }
             }
         }
@@ -189,16 +247,14 @@ public enum NowPlayingControllerFactory {
                 return
             }
 
-            let isStateChange = (isPlaying != lastReportedIsPlaying) || (title != lastReportedTitle)
-            let elapsed = Date().timeIntervalSince(lastReportedDate)
-            let expectedTime =
-                lastReportedTime >= 0
-                ? lastReportedTime + (lastReportedIsPlaying == true ? elapsed : 0)
-                : currentTime
-            let isSeeking = abs(currentTime - expectedTime) > 1.5
-            let isHeartbeat = elapsed >= 5.0
-
-            guard isStateChange || isSeeking || isHeartbeat else {
+            guard
+                throttler.shouldUpdate(
+                    title: title,
+                    currentTime: currentTime,
+                    duration: duration,
+                    isPlaying: isPlaying
+                )
+            else {
                 return
             }
 
@@ -207,11 +263,6 @@ public enum NowPlayingControllerFactory {
             model.duration = duration
             model.isPlaying = isPlaying
 
-            lastReportedTitle = title
-            lastReportedIsPlaying = isPlaying
-            lastReportedTime = currentTime
-            lastReportedDate = Date()
-
             ensureActiveSession()
         }
 
@@ -219,15 +270,15 @@ public enum NowPlayingControllerFactory {
             if session == nil {
                 let newSession = MediaSession(model)
                 self.session = newSession
-                guard activationTask == nil else { return }
-                activationTask = Task { [weak self, weak newSession] in
-                    try? await newSession?.requestToBecomeApplicationPrimary()
+                activationTask?.cancel()
+                activationTask = Task { [weak self] in
+                    try? await self?.session?.requestToBecomeApplicationPrimary()
                     self?.activationTask = nil
                 }
             } else if let session, !session.isApplicationPrimary {
                 guard activationTask == nil else { return }
-                activationTask = Task { [weak self, weak session] in
-                    try? await session?.requestToBecomeApplicationPrimary()
+                activationTask = Task { [weak self] in
+                    try? await self?.session?.requestToBecomeApplicationPrimary()
                     self?.activationTask = nil
                 }
             }
@@ -239,10 +290,7 @@ public enum NowPlayingControllerFactory {
 
             model.title = ""
             model.isPlaying = false
-            lastReportedTitle = ""
-            lastReportedIsPlaying = nil
-            lastReportedTime = -1
-            lastReportedDate = .distantPast
+            throttler.reset()
 
             // Removing reference deactivates the session from system Control Center
             session = nil
@@ -255,7 +303,9 @@ public enum NowPlayingControllerFactory {
 @MainActor
 public final class LegacyMediaPlayerController: NowPlayingController {
     public weak var actions: (any PlayerActions)?
-    public var isKeyWindow: Bool = true {
+    public var isKeyWindow: Bool = true
+
+    public private(set) var isActive: Bool = false {
         didSet {
             updateCommandsEnabledState()
         }
@@ -263,11 +313,7 @@ public final class LegacyMediaPlayerController: NowPlayingController {
 
     private weak var engine: (any PlayerEngineProtocol)?
     private var targets: [(command: MPRemoteCommand, target: Any)] = []
-
-    private var lastReportedTime: Double = -1
-    private var lastReportedIsPlaying: Bool? = nil
-    private var lastReportedTitle: String = ""
-    private var lastReportedDate: Date = .distantPast
+    private var throttler = NowPlayingThrottler()
 
     public init(
         engine: any PlayerEngineProtocol,
@@ -284,7 +330,7 @@ public final class LegacyMediaPlayerController: NowPlayingController {
         // 1. AirPods stem press & hardware media keys
         center.togglePlayPauseCommand.isEnabled = true
         let toggleTarget = center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            guard let self, self.isKeyWindow else { return .noActionableNowPlayingItem }
+            guard let self, self.isActive else { return .noActionableNowPlayingItem }
             if let actions = self.actions {
                 actions.togglePlayPause()
             } else if let engine = self.engine {
@@ -299,14 +345,8 @@ public final class LegacyMediaPlayerController: NowPlayingController {
         // 2. Play command
         center.playCommand.isEnabled = true
         let playTarget = center.playCommand.addTarget { [weak self] _ in
-            guard let self, self.isKeyWindow else { return .noActionableNowPlayingItem }
-            if let actions = self.actions, !(self.engine?.isPlaying ?? false) {
-                actions.togglePlayPause()
-            } else if let engine = self.engine {
-                engine.play()
-            } else {
-                return .noActionableNowPlayingItem
-            }
+            guard let self, self.isActive, let engine = self.engine else { return .noActionableNowPlayingItem }
+            engine.play()
             return .success
         }
         targets.append((center.playCommand, playTarget))
@@ -314,14 +354,8 @@ public final class LegacyMediaPlayerController: NowPlayingController {
         // 3. Pause command
         center.pauseCommand.isEnabled = true
         let pauseTarget = center.pauseCommand.addTarget { [weak self] _ in
-            guard let self, self.isKeyWindow else { return .noActionableNowPlayingItem }
-            if let actions = self.actions, self.engine?.isPlaying ?? false {
-                actions.togglePlayPause()
-            } else if let engine = self.engine {
-                engine.pause()
-            } else {
-                return .noActionableNowPlayingItem
-            }
+            guard let self, self.isActive, let engine = self.engine else { return .noActionableNowPlayingItem }
+            engine.pause()
             return .success
         }
         targets.append((center.pauseCommand, pauseTarget))
@@ -329,7 +363,7 @@ public final class LegacyMediaPlayerController: NowPlayingController {
         // 4. Scrubber in macOS Control Center
         center.changePlaybackPositionCommand.isEnabled = true
         let posTarget = center.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let self, self.isKeyWindow,
+            guard let self, self.isActive,
                 let positionEvent = event as? MPChangePlaybackPositionCommandEvent,
                 let engine = self.engine
             else {
@@ -339,7 +373,7 @@ public final class LegacyMediaPlayerController: NowPlayingController {
             engine.seek(to: targetSeconds)
             // Immediately sync so scrubber position doesn't bounce back on pause
             self.forceUpdateNowPlayingInfo(
-                title: self.lastReportedTitle,
+                title: self.throttler.lastReportedTitle,
                 currentTime: targetSeconds,
                 duration: engine.duration,
                 isPlaying: engine.isPlaying
@@ -352,7 +386,7 @@ public final class LegacyMediaPlayerController: NowPlayingController {
         center.skipForwardCommand.preferredIntervals = [10]
         center.skipForwardCommand.isEnabled = true
         let skipFwdTarget = center.skipForwardCommand.addTarget { [weak self] event in
-            guard let self, self.isKeyWindow else { return .noActionableNowPlayingItem }
+            guard let self, self.isActive else { return .noActionableNowPlayingItem }
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 10
             let step = interval > 0 ? interval : 10
             if let actions = self.actions {
@@ -368,7 +402,7 @@ public final class LegacyMediaPlayerController: NowPlayingController {
         center.skipBackwardCommand.preferredIntervals = [10]
         center.skipBackwardCommand.isEnabled = true
         let skipBwdTarget = center.skipBackwardCommand.addTarget { [weak self] event in
-            guard let self, self.isKeyWindow else { return .noActionableNowPlayingItem }
+            guard let self, self.isActive else { return .noActionableNowPlayingItem }
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 10
             let step = interval > 0 ? interval : 10
             if let actions = self.actions {
@@ -383,12 +417,12 @@ public final class LegacyMediaPlayerController: NowPlayingController {
 
     private func updateCommandsEnabledState() {
         let center = MPRemoteCommandCenter.shared()
-        center.togglePlayPauseCommand.isEnabled = isKeyWindow
-        center.playCommand.isEnabled = isKeyWindow
-        center.pauseCommand.isEnabled = isKeyWindow
-        center.changePlaybackPositionCommand.isEnabled = isKeyWindow
-        center.skipForwardCommand.isEnabled = isKeyWindow
-        center.skipBackwardCommand.isEnabled = isKeyWindow
+        center.togglePlayPauseCommand.isEnabled = isActive
+        center.playCommand.isEnabled = isActive
+        center.pauseCommand.isEnabled = isActive
+        center.changePlaybackPositionCommand.isEnabled = isActive
+        center.skipForwardCommand.isEnabled = isActive
+        center.skipBackwardCommand.isEnabled = isActive
     }
 
     public func update(title: String, currentTime: Double, duration: Double, isPlaying: Bool) {
@@ -397,16 +431,14 @@ public final class LegacyMediaPlayerController: NowPlayingController {
             return
         }
 
-        let isStateChange = (isPlaying != lastReportedIsPlaying) || (title != lastReportedTitle)
-        let elapsed = Date().timeIntervalSince(lastReportedDate)
-        let expectedTime =
-            lastReportedTime >= 0
-            ? lastReportedTime + (lastReportedIsPlaying == true ? elapsed : 0)
-            : currentTime
-        let isSeeking = abs(currentTime - expectedTime) > 1.5
-        let isHeartbeat = elapsed >= 5.0
-
-        guard isStateChange || isSeeking || isHeartbeat else {
+        guard
+            throttler.shouldUpdate(
+                title: title,
+                currentTime: currentTime,
+                duration: duration,
+                isPlaying: isPlaying
+            )
+        else {
             return
         }
 
@@ -424,10 +456,12 @@ public final class LegacyMediaPlayerController: NowPlayingController {
         duration: Double,
         isPlaying: Bool
     ) {
-        lastReportedTitle = title
-        lastReportedIsPlaying = isPlaying
-        lastReportedTime = currentTime
-        lastReportedDate = Date()
+        isActive = true
+        throttler.forceRecord(
+            title: title,
+            currentTime: currentTime,
+            isPlaying: isPlaying
+        )
 
         var info = [String: Any]()
         info[MPMediaItemPropertyTitle] = title
@@ -446,10 +480,8 @@ public final class LegacyMediaPlayerController: NowPlayingController {
     }
 
     public func clear() {
-        lastReportedTitle = ""
-        lastReportedIsPlaying = nil
-        lastReportedTime = -1
-        lastReportedDate = .distantPast
+        isActive = false
+        throttler.reset()
 
         let center = MPNowPlayingInfoCenter.default()
         center.nowPlayingInfo = nil

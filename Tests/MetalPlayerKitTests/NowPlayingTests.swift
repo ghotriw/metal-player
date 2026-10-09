@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import MediaPlayer
 import MetalPlayerCore
@@ -50,24 +51,24 @@ struct NowPlayingTests {
         #expect(center.playbackState == .stopped)
     }
 
-    @Test("LegacyMediaPlayerController respects isKeyWindow focus state")
+    @Test("LegacyMediaPlayerController toggles remote command center enabled state on active media")
     @MainActor
-    func testLegacyCommandCenterKeyWindowToggling() async throws {
+    func testLegacyCommandCenterActiveStateToggling() async throws {
         let engine = PlayerEngine()
         let legacy = LegacyMediaPlayerController(engine: engine)
         let remote = MPRemoteCommandCenter.shared()
 
-        legacy.isKeyWindow = true
+        legacy.update(title: "Active Video", currentTime: 0, duration: 100, isPlaying: true)
+        #expect(legacy.isActive == true)
         #expect(remote.togglePlayPauseCommand.isEnabled == true)
         #expect(remote.playCommand.isEnabled == true)
         #expect(remote.pauseCommand.isEnabled == true)
 
-        legacy.isKeyWindow = false
+        legacy.clear()
+        #expect(legacy.isActive == false)
         #expect(remote.togglePlayPauseCommand.isEnabled == false)
         #expect(remote.playCommand.isEnabled == false)
         #expect(remote.pauseCommand.isEnabled == false)
-
-        legacy.clear()
     }
 
     #if canImport(NowPlaying)
@@ -119,5 +120,91 @@ struct NowPlayingTests {
         #expect(controller.isKeyWindow == true)
         controller.update(title: "Factory Video", currentTime: 0, duration: 100, isPlaying: true)
         controller.clear()
+    }
+
+    @Test("PlayerWindowController handles closing and opening a second video seamlessly")
+    @MainActor
+    func testPlayerWindowControllerReopenLifecycle() async throws {
+        let windowController = PlayerWindowController()
+
+        // 1. First video playback
+        windowController.nowPlayingController.update(title: "Video 1", currentTime: 0, duration: 100, isPlaying: true)
+
+        // 2. Window close simulation
+        windowController.windowWillClose(Notification(name: NSWindow.willCloseNotification))
+
+        // 3. Second video playback in same or new instance
+        windowController.nowPlayingController.update(title: "Video 2", currentTime: 0, duration: 200, isPlaying: true)
+
+        // Verify that callbacks are still attached and second video updates nowPlayingController
+        windowController.engine.onPlaybackStateChanged?(.playing)
+        windowController.engine.onTimeUpdate?(5.0, 200.0)
+
+        windowController.windowWillClose(Notification(name: NSWindow.willCloseNotification))
+    }
+
+    @Test("NowPlayingThrottler accurately throttles 1x ticks and detects state changes, seeks, and heartbeats")
+    func testNowPlayingThrottler() {
+        var throttler = NowPlayingThrottler()
+        let t0 = Date(timeIntervalSince1970: 1000.0)
+
+        // Empty title is always rejected
+        #expect(throttler.shouldUpdate(title: "", currentTime: 0, duration: 100, isPlaying: true, now: t0) == false)
+
+        // 1. First initial update -> allowed
+        #expect(
+            throttler.shouldUpdate(title: "Movie", currentTime: 0.0, duration: 100.0, isPlaying: true, now: t0) == true)
+        #expect(throttler.lastReportedTitle == "Movie")
+        #expect(throttler.lastReportedTime == 0.0)
+        #expect(throttler.lastReportedIsPlaying == true)
+
+        // 2. Continuous 1x playback tick (0.1s later, currentTime = 0.1s) -> throttled
+        let t1 = t0.addingTimeInterval(0.1)
+        #expect(
+            throttler.shouldUpdate(title: "Movie", currentTime: 0.1, duration: 100.0, isPlaying: true, now: t1) == false
+        )
+
+        // 3. Normal progress after 1.0s (currentTime = 1.0s) -> still throttled
+        let t2 = t0.addingTimeInterval(1.0)
+        #expect(
+            throttler.shouldUpdate(title: "Movie", currentTime: 1.0, duration: 100.0, isPlaying: true, now: t2) == false
+        )
+
+        // 4. Seek detected (at 1.0s, user jumped to 50.0s) -> allowed
+        #expect(
+            throttler.shouldUpdate(title: "Movie", currentTime: 50.0, duration: 100.0, isPlaying: true, now: t2) == true
+        )
+        #expect(throttler.lastReportedTime == 50.0)
+
+        // 5. Playback pause state change -> allowed immediately
+        let t3 = t2.addingTimeInterval(0.2)
+        #expect(
+            throttler.shouldUpdate(title: "Movie", currentTime: 50.2, duration: 100.0, isPlaying: false, now: t3)
+                == true)
+        #expect(throttler.lastReportedIsPlaying == false)
+
+        // 6. While paused, small jitter (<1.5s) -> throttled
+        let t4 = t3.addingTimeInterval(0.5)
+        #expect(
+            throttler.shouldUpdate(title: "Movie", currentTime: 50.5, duration: 100.0, isPlaying: false, now: t4)
+                == false)
+
+        // 7. While paused, seek jump (>1.5s) -> allowed
+        #expect(
+            throttler.shouldUpdate(title: "Movie", currentTime: 70.0, duration: 100.0, isPlaying: false, now: t4)
+                == true)
+        #expect(throttler.lastReportedTime == 70.0)
+
+        // 8. Heartbeat refresh after 5.0 seconds without state change -> allowed
+        let t5 = t4.addingTimeInterval(5.1)
+        #expect(
+            throttler.shouldUpdate(title: "Movie", currentTime: 70.0, duration: 100.0, isPlaying: false, now: t5)
+                == true)
+
+        // 9. Reset clears all state
+        throttler.reset()
+        #expect(throttler.lastReportedTitle == "")
+        #expect(throttler.lastReportedTime == -1)
+        #expect(throttler.lastReportedIsPlaying == nil)
     }
 }

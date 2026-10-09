@@ -12,6 +12,7 @@ A video player for macOS built on VideoToolbox, AVSampleBufferDisplayLayer, and 
 - [x] Audio: master clock sync, multiple PCM tracks, Spatial Audio, 5.1/7.1
 - [x] Diagnostics overlay: CPU/RAM, A/V drift, queue levels
 - [x] Desktop UX: keyboard shortcuts, double-click fullscreen, cursor auto-hide
+- [x] Now Playing & system media controls.
 - [x] HTTP/HTTPS streaming with custom auth headers
 - [x] Resume playback & start time position control (Watch Later)
 - [x] Subtitles: embedded SubRip/MKV/MP4 & external SRT/WebVTT with styling & alignment

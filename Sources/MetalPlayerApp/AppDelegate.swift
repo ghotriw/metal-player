@@ -65,6 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.onClose = { [weak self] in
                 self?.isPlayerActive = false
                 self?.activePlayer = nil
+                self?.playerWindowController = nil
                 // When player window closes, return to welcome window if app is still running
                 self?.showWelcomeWindow()
             }

@@ -221,8 +221,6 @@ public final class PlayerWindowController: NSWindowController, NSWindowDelegate 
     }
 
     public func windowWillClose(_ notification: Notification) {
-        engine.onPlaybackStateChanged = nil
-        engine.onTimeUpdate = nil
         nowPlayingController.clear()
         engine.stop()
         onClose?()
