@@ -40,6 +40,7 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor var isHDRDisplay: Bool { get set }
     @MainActor var isToneMappingPermitted: Bool { get set }
     nonisolated var activeRenderMode: RenderMode { get }
+    @MainActor var isDisplaySleepDisabled: Bool { get }
 
     @MainActor var metalExposure: Float { get set }
     @MainActor var metalShadowLift: Float { get set }
@@ -108,4 +109,8 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor func toggleDebugHUD()
     @MainActor func renderCurrentFrame()
     @MainActor func selectAudioTrack(id: Int)
+}
+
+extension PlayerEngineProtocol {
+    public var isDisplaySleepDisabled: Bool { false }
 }

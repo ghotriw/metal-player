@@ -12,7 +12,11 @@ import os
 public final class PlayerEngine: PlayerEngineProtocol {
     public var currentTime: Double = 0
     public var duration: Double = 0
-    public var isPlaying: Bool = false
+    public var isPlaying: Bool = false {
+        didSet {
+            displaySleepManager.update(isPlaying: isPlaying, hasVideo: hasVideo)
+        }
+    }
     public var isLoaded: Bool = false
     public var isLoading: Bool = false
     public var loadError: String? = nil
@@ -35,7 +39,15 @@ public final class PlayerEngine: PlayerEngineProtocol {
     public var mediaTitle: String = ""
     public var artworkData: Data? = nil
     public var artworkURL: URL? = nil
-    public var hasVideo: Bool = false
+    public var hasVideo: Bool = false {
+        didSet {
+            displaySleepManager.update(isPlaying: isPlaying, hasVideo: hasVideo)
+        }
+    }
+    public let displaySleepManager = DisplaySleepManager()
+    public var isDisplaySleepDisabled: Bool {
+        displaySleepManager.isSleepDisabled
+    }
     public var videoWidth: Int = 0
     public var videoHeight: Int = 0
     public var isHDRContent: Bool = false {
@@ -716,6 +728,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         isLoaded = false
         isLoading = true
         loadError = nil
+        hasVideo = false
         playbackState = .loading
 
         let task = Task.detached(priority: .userInitiated) { () -> MediaDemuxer? in
@@ -790,6 +803,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         isLoaded = false
         isLoading = false
         loadError = nil
+        hasVideo = false
         playbackState = .loading
 
         guard let demuxer = MediaDemuxer(url: path, headers: headers) else {
@@ -821,6 +835,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         demuxer = nil
         stopPlaybackPipeline()
         clearVideoSurface()
+        hasVideo = false
         mediaTitle = ""
         artworkData = nil
         artworkURL = nil
@@ -1703,6 +1718,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
 
     isolated deinit {
         stop()
+        displaySleepManager.enableDisplaySleep()
         seekTask?.cancel()
         seekTask = nil
         if let observer = timeObserver {
