@@ -8,8 +8,8 @@ public struct SettingsView: View {
     @AppStorage(PlayerConfiguration.keySharpness)
     private var sharpness: Double = 0.5
 
-    @AppStorage(PlayerConfiguration.keyTargetNits)
-    private var targetNits: Double = 203.0
+    @AppStorage(PlayerConfiguration.keyTargetNitsScale)
+    private var targetNitsScale: Double = 1.0
 
     @AppStorage(PlayerConfiguration.keyResumePlayback)
     private var resumePlayback: Bool = true
@@ -207,17 +207,22 @@ public struct SettingsView: View {
 
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
-                        Text("Reference White Level:")
+                        Text("Target White Scale:")
                         Spacer()
-                        Text("\(Int(targetNits)) nits")
+                        Text(String(format: "%.2fx (%.0f%%)", targetNitsScale, targetNitsScale * 100))
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
-                    Slider(value: $targetNits, in: 100...1000, step: 10)
+                    Slider(value: $targetNitsScale, in: 0.5...2.0, step: 0.05)
                         .disabled(!enableToneMapping)
-                        .onChange(of: targetNits) { _, _ in
+                        .onChange(of: targetNitsScale) { _, _ in
                             notifyChange()
                         }
+                    Text(
+                        "Multiplies the dynamic content-adaptive white level (1.00x = optimal auto). Lower values make dark scenes brighter; higher values increase contrast."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             } header: {
                 Text("Tone Mapping Tuning")
@@ -422,7 +427,7 @@ public struct SettingsView: View {
         let current = PlayerConfiguration(
             enableToneMapping: enableToneMapping,
             defaultRenderMode: .auto,
-            targetNits: Float(targetNits),
+            targetNitsScale: Float(targetNitsScale),
             sharpness: Float(sharpness),
             resumePlayback: resumePlayback,
             resumeStartThreshold: resumeStartThreshold,

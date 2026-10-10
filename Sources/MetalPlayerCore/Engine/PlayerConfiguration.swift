@@ -10,8 +10,15 @@ public struct PlayerConfiguration: Sendable, Equatable {
     /// Default render mode requested on startup.
     public var defaultRenderMode: RenderMode
 
+    /// User multiplier coefficient scaling the content-adaptive target white level (default 1.0, range 0.5 ... 2.0).
+    public var targetNitsScale: Float
+
     /// Target reference white level in nits for BT.2390 tone mapping (default 203.0).
-    public var targetNits: Float
+    /// For backward compatibility, setting `targetNits` adjusts `targetNitsScale` relative to 203.0.
+    public var targetNits: Float {
+        get { 203.0 * targetNitsScale }
+        set { targetNitsScale = max(newValue / 203.0, 0.1) }
+    }
 
     /// Default sharpness factor for FidelityFX CAS (0.0 ... 1.0).
     public var sharpness: Float
@@ -69,6 +76,7 @@ public struct PlayerConfiguration: Sendable, Equatable {
         enableToneMapping: Bool = true,
         defaultRenderMode: RenderMode = .auto,
         targetNits: Float = 203.0,
+        targetNitsScale: Float? = nil,
         sharpness: Float = 0.5,
         initialVolume: Float = 1.0,
         httpHeaders: [String: String] = [:],
@@ -88,7 +96,11 @@ public struct PlayerConfiguration: Sendable, Equatable {
     ) {
         self.enableToneMapping = enableToneMapping
         self.defaultRenderMode = defaultRenderMode
-        self.targetNits = targetNits
+        if let scale = targetNitsScale {
+            self.targetNitsScale = scale
+        } else {
+            self.targetNitsScale = max(targetNits / 203.0, 0.1)
+        }
         self.sharpness = sharpness
         self.initialVolume = initialVolume
         self.httpHeaders = httpHeaders
@@ -109,6 +121,7 @@ public struct PlayerConfiguration: Sendable, Equatable {
 
     public static let keyEnableToneMapping = "MetalPlayer.enableToneMapping"
     public static let keyTargetNits = "MetalPlayer.targetNits"
+    public static let keyTargetNitsScale = "MetalPlayer.targetNitsScale"
     public static let keySharpness = "MetalPlayer.sharpness"
     public static let keyResumePlayback = "MetalPlayer.resumePlayback"
     public static let keyResumeStartThreshold = "MetalPlayer.resumeStartThreshold"
@@ -127,7 +140,9 @@ public struct PlayerConfiguration: Sendable, Equatable {
         if userDefaults.object(forKey: keyEnableToneMapping) != nil {
             config.enableToneMapping = userDefaults.bool(forKey: keyEnableToneMapping)
         }
-        if let targetNits = userDefaults.object(forKey: keyTargetNits) as? NSNumber {
+        if let targetNitsScale = userDefaults.object(forKey: keyTargetNitsScale) as? NSNumber {
+            config.targetNitsScale = targetNitsScale.floatValue
+        } else if let targetNits = userDefaults.object(forKey: keyTargetNits) as? NSNumber {
             config.targetNits = targetNits.floatValue
         }
         if let sharpness = userDefaults.object(forKey: keySharpness) as? NSNumber {
@@ -169,6 +184,7 @@ public struct PlayerConfiguration: Sendable, Equatable {
     /// Saves configuration properties to UserDefaults.
     public func saveToUserDefaults(userDefaults: UserDefaults = .standard) {
         userDefaults.set(enableToneMapping, forKey: Self.keyEnableToneMapping)
+        userDefaults.set(targetNitsScale, forKey: Self.keyTargetNitsScale)
         userDefaults.set(targetNits, forKey: Self.keyTargetNits)
         userDefaults.set(sharpness, forKey: Self.keySharpness)
         userDefaults.set(resumePlayback, forKey: Self.keyResumePlayback)
@@ -214,6 +230,10 @@ public struct PlayerConfiguration: Sendable, Equatable {
                     config.defaultRenderMode = .metalToneMap
                 } else {
                     config.defaultRenderMode = .auto
+                }
+            } else if arg.starts(with: "--target-nits-scale=") {
+                if let val = Float(arg.dropFirst("--target-nits-scale=".count)) {
+                    config.targetNitsScale = max(0.1, min(4.0, val))
                 }
             } else if arg.starts(with: "--target-nits=") {
                 if let val = Float(arg.dropFirst("--target-nits=".count)) {

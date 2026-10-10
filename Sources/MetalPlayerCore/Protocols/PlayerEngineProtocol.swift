@@ -45,6 +45,8 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor var metalExposure: Float { get set }
     @MainActor var metalShadowLift: Float { get set }
     @MainActor var metalTargetNits: Float { get set }
+    @MainActor var targetNitsScale: Float { get set }
+    @MainActor var baseAdaptiveTargetNits: Float { get }
     @MainActor var metalSharpness: Float { get set }
 
     @MainActor var volume: Float { get set }

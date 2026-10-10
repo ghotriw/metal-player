@@ -104,8 +104,29 @@ public final class PlayerEngine: PlayerEngineProtocol {
     public var metalTargetNits: Float = 203.0 {
         didSet {
             metalRenderer?.uniforms.targetNits = metalTargetNits
+            performanceMonitor.updateTargetNits(metalTargetNits)
         }
     }
+    /// Content-adapted base reference white in nits (e.g. 203 for 1000-nit, ~116 for The Agency).
+    public private(set) var baseAdaptiveTargetNits: Float = 203.0
+
+    /// User scale multiplier adjusting the content-adaptive target white (default 1.0, range 0.5 ... 2.0 in UI, 0.1 ... 4.0 engine bound).
+    public var targetNitsScale: Float = 1.0 {
+        didSet {
+            let clamped = max(0.1, min(4.0, targetNitsScale))
+            if targetNitsScale != clamped {
+                targetNitsScale = clamped
+                return
+            }
+            recomputeEffectiveTargetNits()
+        }
+    }
+
+    private func recomputeEffectiveTargetNits() {
+        let effective = max(min(baseAdaptiveTargetNits * targetNitsScale, 500.0), 80.0)
+        self.metalTargetNits = effective
+    }
+
     public var metalSharpness: Float = 0.5 {
         didSet {
             metalRenderer?.uniforms.outputSharpness = metalSharpness
@@ -115,7 +136,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
     public func applyConfiguration(_ config: PlayerConfiguration) {
         self.configuration = config
         self.isToneMappingPermitted = config.enableToneMapping
-        self.metalTargetNits = config.targetNits
+        self.targetNitsScale = config.targetNitsScale
         self.metalSharpness = config.sharpness
         self.subtitleFontSize = config.subtitleFontSize
         self.subtitleFontName = config.subtitleFontName
@@ -293,7 +314,10 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.historyStore = historyStore
         self.renderMode = configuration.defaultRenderMode
         self.isToneMappingPermitted = configuration.enableToneMapping
-        self.metalTargetNits = configuration.targetNits
+        self.targetNitsScale = configuration.targetNitsScale
+        self.baseAdaptiveTargetNits = 203.0
+        let effectiveNits = max(min(203.0 * configuration.targetNitsScale, 500.0), 80.0)
+        self.metalTargetNits = effectiveNits
         self.metalSharpness = configuration.sharpness
         self.volume = configuration.initialVolume
         self.subtitleFontSize = configuration.subtitleFontSize
@@ -304,7 +328,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.subtitleBgOpacity = configuration.subtitleBgOpacity
         self.enableOSD = configuration.enableOSD
 
-        metalRenderer?.uniforms.targetNits = configuration.targetNits
+        metalRenderer?.uniforms.targetNits = effectiveNits
         metalRenderer?.uniforms.outputSharpness = configuration.sharpness
         self.sampleBufferRenderer = displayLayer.sampleBufferRenderer
         // Synchronizer manages audio receiver and master clock timeline
@@ -995,6 +1019,31 @@ public final class PlayerEngine: PlayerEngineProtocol {
         return lowerTitle.contains(key)
     }
 
+    /// Computes the optimal target reference white (nits) for ITU-R BT.2390 tone mapping
+    /// on standard SDR displays, adapting to content peak and frame-average luminance.
+    public nonisolated static func computeAdaptiveTargetNits(
+        baseTargetNits: Float = 203.0,
+        maxPeakNits: Float,
+        maxFallNits: Float = 0.0
+    ) -> Float {
+        // If content is high-peak mastering (>= 950 nits) and not extremely dark, keep ITU reference (203.0)
+        if maxPeakNits >= 950.0 && (maxFallNits == 0 || maxFallNits >= 120.0) {
+            return baseTargetNits
+        }
+
+        // Scale reference white down smoothly for lower-peak mastering (300...1000 -> 100...baseTargetNits)
+        var target = 100.0 + (baseTargetNits - 100.0) * max(min((maxPeakNits - 300.0) / 700.0, 1.0), 0.0)
+
+        // If the scene average (MaxFALL) is known and low (< 100 nits, e.g. low-key dark drama),
+        // adjust the target white to prevent crushing midtones and shadows
+        if maxFallNits > 0 && maxFallNits < 100.0 {
+            let fallFactor = max(maxFallNits / 100.0, 0.7)
+            target = min(target, 100.0 + (target - 100.0) * fallFactor)
+        }
+
+        return max(min(target, baseTargetNits), 100.0)
+    }
+
     private func applyLoadedDemuxer(
         _ demuxer: MediaDemuxer, path: String, headers: [String: String], requestedStartTime: Double?,
         requestedAudioTrack: String?, requestedSubtitleTrack: String?
@@ -1068,8 +1117,23 @@ public final class PlayerEngine: PlayerEngineProtocol {
         }
 
         if demuxer.hasVideo {
+            let baseAdaptive = Self.computeAdaptiveTargetNits(
+                baseTargetNits: 203.0,
+                maxPeakNits: demuxer.maxPeakNits,
+                maxFallNits: demuxer.maxFallNits
+            )
+            self.baseAdaptiveTargetNits = baseAdaptive
+            let effectiveTargetNits = max(min(baseAdaptive * self.targetNitsScale, 500.0), 80.0)
+            self.metalTargetNits = effectiveTargetNits
+            let autoShadowLift: Float =
+                (demuxer.maxFallNits > 0 && demuxer.maxFallNits < 80.0 && self.metalShadowLift == 0.0) ? 0.008 : 0.0
+
             self.metalRenderer?.updateUniforms { uniforms in
                 uniforms.sourcePeakNits = demuxer.maxPeakNits
+                uniforms.targetNits = effectiveTargetNits
+                if autoShadowLift > 0.0 {
+                    uniforms.outputShadowLift = autoShadowLift
+                }
                 if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_709_2 {
                     uniforms.colorPrimaries = 1
                 } else if demuxer.colorPrimaries == kCVImageBufferColorPrimaries_DCI_P3
@@ -1131,7 +1195,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 colorPrimaries: primariesStr,
                 transferFunction: transferStr,
                 sourcePeakNits: demuxer.maxPeakNits,
-                targetNits: 203.0
+                targetNits: effectiveTargetNits
             )
         }
 

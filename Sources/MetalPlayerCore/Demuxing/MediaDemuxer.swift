@@ -337,6 +337,7 @@ public final class MediaDemuxer: @unchecked Sendable {
     public private(set) var width: Int = 0
     public private(set) var height: Int = 0
     public private(set) var maxPeakNits: Float = 1000.0
+    public private(set) var maxFallNits: Float = 0.0
     public private(set) var colorPrimaries: CFString = kCVImageBufferColorPrimaries_ITU_R_709_2
     public private(set) var transferFunction: CFString = kCVImageBufferTransferFunction_ITU_R_709_2
     public private(set) var yCbCrMatrix: CFString = kCVImageBufferYCbCrMatrix_ITU_R_709_2
@@ -622,43 +623,65 @@ public final class MediaDemuxer: @unchecked Sendable {
                     }
                 }
 
-                // If not found in raw extradata box, check FFmpeg stream side data (standard for MKV/Matroska)
-                if self.dolbyVisionProfile == nil {
-                    let sideDataCount = Int(stream.pointee.codecpar.pointee.nb_coded_side_data)
-                    if sideDataCount > 0, let sideDataList = stream.pointee.codecpar.pointee.coded_side_data {
-                        for s in 0..<sideDataCount {
-                            let sd = sideDataList[s]
-                            if sd.type == AV_PKT_DATA_DOVI_CONF, let sdData = sd.data,
-                                sd.size >= MemoryLayout<AVDOVIDecoderConfigurationRecord>.size
-                            {
-                                let doviConf = UnsafeMutableRawPointer(sdData).assumingMemoryBound(
-                                    to: AVDOVIDecoderConfigurationRecord.self)
-                                let dvProfile = Int(doviConf.pointee.dv_profile)
-                                let compatId = Int(doviConf.pointee.dv_bl_signal_compatibility_id & 0x0F)
-                                self.dolbyVisionProfile = dvProfile
-                                self.dolbyVisionCompatibilityId = compatId
-                                self.bitDepth = 10
-                                if dvProfile == 5 {
-                                    self.isDolbyVisionProfile5 = true
+                let sideDataCount = Int(stream.pointee.codecpar.pointee.nb_coded_side_data)
+                if sideDataCount > 0, let sideDataList = stream.pointee.codecpar.pointee.coded_side_data {
+                    for s in 0..<sideDataCount {
+                        let sd = sideDataList[s]
+                        if self.dolbyVisionProfile == nil && sd.type == AV_PKT_DATA_DOVI_CONF, let sdData = sd.data,
+                            sd.size >= MemoryLayout<AVDOVIDecoderConfigurationRecord>.size
+                        {
+                            let doviConf = UnsafeMutableRawPointer(sdData).assumingMemoryBound(
+                                to: AVDOVIDecoderConfigurationRecord.self)
+                            let dvProfile = Int(doviConf.pointee.dv_profile)
+                            let compatId = Int(doviConf.pointee.dv_bl_signal_compatibility_id & 0x0F)
+                            self.dolbyVisionProfile = dvProfile
+                            self.dolbyVisionCompatibilityId = compatId
+                            self.bitDepth = 10
+                            if dvProfile == 5 {
+                                self.isDolbyVisionProfile5 = true
+                            }
+                            // Construct standard 24-byte DOVI configuration box payload per ISO/IEC 14496-15
+                            var boxPayload = [UInt8](repeating: 0, count: 24)
+                            boxPayload[0] = doviConf.pointee.dv_version_major
+                            boxPayload[1] = doviConf.pointee.dv_version_minor
+                            let p = doviConf.pointee.dv_profile
+                            let l = doviConf.pointee.dv_level
+                            let rpu = doviConf.pointee.rpu_present_flag & 0x01
+                            let el = doviConf.pointee.el_present_flag & 0x01
+                            let bl = doviConf.pointee.bl_present_flag & 0x01
+                            boxPayload[2] = ((p & 0x7F) << 1) | ((l >> 5) & 0x01)
+                            boxPayload[3] = ((l & 0x1F) << 3) | (rpu << 2) | (el << 1) | bl
+                            boxPayload[4] = UInt8(compatId << 4)
+                            self.dolbyVisionConfigData = Data(boxPayload)
+                            AppLog.info(
+                                .video,
+                                "Detected Dolby Vision Profile \(dvProfile) via FFmpeg side data (compatibility id: \(compatId))"
+                            )
+                        } else if sd.type == AV_PKT_DATA_CONTENT_LIGHT_LEVEL, let sdData = sd.data,
+                            sd.size >= MemoryLayout<AVContentLightMetadata>.size
+                        {
+                            let clm = UnsafeMutableRawPointer(sdData).assumingMemoryBound(
+                                to: AVContentLightMetadata.self)
+                            if clm.pointee.MaxCLL > 0 {
+                                self.maxPeakNits = Float(clm.pointee.MaxCLL)
+                            }
+                            if clm.pointee.MaxFALL > 0 {
+                                self.maxFallNits = Float(clm.pointee.MaxFALL)
+                            }
+                            AppLog.info(
+                                .video,
+                                "Extracted ContentLightLevel from side data: MaxCLL=\(clm.pointee.MaxCLL), MaxFALL=\(clm.pointee.MaxFALL)"
+                            )
+                        } else if sd.type == AV_PKT_DATA_MASTERING_DISPLAY_METADATA, let sdData = sd.data,
+                            sd.size >= MemoryLayout<AVMasteringDisplayMetadata>.size
+                        {
+                            let mdm = UnsafeMutableRawPointer(sdData).assumingMemoryBound(
+                                to: AVMasteringDisplayMetadata.self)
+                            if mdm.pointee.has_luminance != 0 && mdm.pointee.max_luminance.den > 0 {
+                                let maxLum = Float(mdm.pointee.max_luminance.num) / Float(mdm.pointee.max_luminance.den)
+                                if self.maxPeakNits == 1000.0 && maxLum > 0 {
+                                    self.maxPeakNits = maxLum
                                 }
-                                // Construct standard 24-byte DOVI configuration box payload per ISO/IEC 14496-15
-                                var boxPayload = [UInt8](repeating: 0, count: 24)
-                                boxPayload[0] = doviConf.pointee.dv_version_major
-                                boxPayload[1] = doviConf.pointee.dv_version_minor
-                                let p = doviConf.pointee.dv_profile
-                                let l = doviConf.pointee.dv_level
-                                let rpu = doviConf.pointee.rpu_present_flag & 0x01
-                                let el = doviConf.pointee.el_present_flag & 0x01
-                                let bl = doviConf.pointee.bl_present_flag & 0x01
-                                boxPayload[2] = ((p & 0x7F) << 1) | ((l >> 5) & 0x01)
-                                boxPayload[3] = ((l & 0x1F) << 3) | (rpu << 2) | (el << 1) | bl
-                                boxPayload[4] = UInt8(compatId << 4)
-                                self.dolbyVisionConfigData = Data(boxPayload)
-                                AppLog.info(
-                                    .video,
-                                    "Detected Dolby Vision Profile \(dvProfile) via FFmpeg side data (compatibility id: \(compatId))"
-                                )
-                                break
                             }
                         }
                     }
@@ -1128,13 +1151,26 @@ public final class MediaDemuxer: @unchecked Sendable {
             // SEI 137: Mastering display colour volume (24 bytes)
             if payloadType == 137 && unescaped.count >= 24 {
                 masteringDisplay = Data(unescaped[0..<24])
+                if self.maxPeakNits == 1000.0 {
+                    let maxLumRaw =
+                        (UInt32(unescaped[16]) << 24) | (UInt32(unescaped[17]) << 16) | (UInt32(unescaped[18]) << 8)
+                        | UInt32(unescaped[19])
+                    let maxLumNits = Float(maxLumRaw) / 10000.0
+                    if maxLumNits > 0 {
+                        self.maxPeakNits = maxLumNits
+                    }
+                }
             }
             // SEI 144: Content light level info (4 bytes: maxCLL 2 bytes, maxFALL 2 bytes)
             else if payloadType == 144 && unescaped.count >= 4 {
                 contentLightLevel = Data(unescaped[0..<4])
                 let maxCLL = (Int(unescaped[0]) << 8) | Int(unescaped[1])
+                let maxFALL = (Int(unescaped[2]) << 8) | Int(unescaped[3])
                 if maxCLL > 0 {
                     self.maxPeakNits = Float(maxCLL)
+                }
+                if maxFALL > 0 {
+                    self.maxFallNits = Float(maxFALL)
                 }
             }
 

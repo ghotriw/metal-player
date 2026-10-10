@@ -167,6 +167,13 @@ public final class PlayerPerformanceMonitor: @unchecked Sendable {
         }
     }
 
+    /// Updates target reference white nits dynamically.
+    public func updateTargetNits(_ targetNits: Float) {
+        metricsLock.withLock { metrics in
+            metrics.targetNits = targetNits
+        }
+    }
+
     /// Updates process-wide CPU and memory metrics (called periodically, e.g. every 500ms).
     public func updateProcessMetrics() {
         let cpu = currentProcessCpuPercentage()
