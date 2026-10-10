@@ -81,11 +81,32 @@ public struct ControlsOverlay: View {
                 }
                 .buttonStyle(.plain)
 
-                // Current time
+                // Current time (clickable to jump to time)
                 Text(formatTime(isDragging ? dragPosition : engine.currentTime))
                     .font(.system(size: 12, weight: .regular, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.9))
                     .frame(minWidth: 48, alignment: .trailing)
+                    .onTapGesture {
+                        guard engine.isLoaded && engine.duration > 0, let uiState else { return }
+                        if uiState.isJumpToPresented {
+                            let shouldResume = uiState.dismissJumpTo()
+                            withAnimation(.spring(duration: 0.25)) {
+                                uiState.isJumpToPresented = false
+                            }
+                            if shouldResume {
+                                engine.play()
+                            }
+                        } else {
+                            let wasPlaying = engine.isPlaying
+                            if wasPlaying {
+                                engine.pause()
+                            }
+                            withAnimation(.spring(duration: 0.25)) {
+                                uiState.showJumpTo(wasPlaying: wasPlaying)
+                            }
+                        }
+                    }
+                    .help("Jump to Time (⌘J)")
 
                 // Progress Bar
                 GeometryReader { geo in
@@ -214,16 +235,7 @@ public struct ControlsOverlay: View {
     }
 
     private func formatTime(_ seconds: Double) -> String {
-        guard !seconds.isNaN && !seconds.isInfinite && seconds >= 0 else { return "00:00" }
-        let total = Int(seconds)
-        let s = total % 60
-        let m = (total / 60) % 60
-        let h = total / 3600
-        if h > 0 {
-            return String(format: "%02d:%02d:%02d", h, m, s)
-        } else {
-            return String(format: "%02d:%02d", m, s)
-        }
+        TimeParser.format(seconds: seconds)
     }
 
     private func showAudioTrackMenu() {

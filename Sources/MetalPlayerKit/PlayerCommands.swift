@@ -46,6 +46,14 @@ public struct PlayerCommands: Commands {
                 playerActions?.seekRelative(by: -5.0)
             }
             .disabled(playerActions == nil)
+
+            Divider()
+
+            Button("Jump to Time…") {
+                playerActions?.promptJumpToTime()
+            }
+            .keyboardShortcut("j", modifiers: .command)
+            .disabled(playerActions == nil || !(playerActions?.canJumpToTime ?? false))
         }
 
         CommandMenu("Audio") {

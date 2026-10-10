@@ -9,6 +9,9 @@ public protocol PlayerActions: AnyObject {
     var isMuted: Bool { get }
     var showDebugHUD: Bool { get }
 
+    var canJumpToTime: Bool { get }
+    var isJumpToPresented: Bool { get }
+
     func togglePlayPause()
     func stepFrameForward()
     func stepFrameBackward()
@@ -18,6 +21,15 @@ public protocol PlayerActions: AnyObject {
     func toggleDebugHUD()
     func toggleFullscreen()
     func exitFullscreen()
+    func promptJumpToTime()
+    func dismissJumpToTime()
+}
+
+extension PlayerActions {
+    public var canJumpToTime: Bool { true }
+    public var isJumpToPresented: Bool { false }
+    public func promptJumpToTime() {}
+    public func dismissJumpToTime() {}
 }
 
 public struct PlayerActionsKey: FocusedValueKey {

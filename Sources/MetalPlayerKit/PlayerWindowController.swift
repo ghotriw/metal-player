@@ -387,4 +387,38 @@ extension PlayerWindowController: PlayerActions {
     public func toggleFullscreen() {
         window?.toggleFullScreen(nil)
     }
+
+    public var canJumpToTime: Bool {
+        engine.isLoaded && engine.duration > 0
+    }
+
+    public var isJumpToPresented: Bool {
+        uiState.isJumpToPresented
+    }
+
+    public func promptJumpToTime() {
+        guard canJumpToTime else { return }
+        if uiState.isJumpToPresented {
+            dismissJumpToTime()
+        } else {
+            let wasPlaying = engine.isPlaying
+            if wasPlaying {
+                engine.pause()
+            }
+            withAnimation(.spring(duration: 0.25)) {
+                uiState.showJumpTo(wasPlaying: wasPlaying)
+            }
+        }
+    }
+
+    public func dismissJumpToTime() {
+        guard uiState.isJumpToPresented else { return }
+        let shouldResume = uiState.dismissJumpTo()
+        withAnimation(.spring(duration: 0.25)) {
+            uiState.isJumpToPresented = false
+        }
+        if shouldResume {
+            engine.play()
+        }
+    }
 }

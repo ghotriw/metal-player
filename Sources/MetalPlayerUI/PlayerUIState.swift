@@ -6,6 +6,8 @@ import Observation
 public final class PlayerUIState {
     public var isFullscreen: Bool
     public var controlsVisibilityTrigger: Int = 0
+    public var isJumpToPresented: Bool = false
+    public var wasPlayingBeforeJumpTo: Bool = false
     public let osd: OSDManager
 
     public init(isFullscreen: Bool = false, osd: OSDManager = OSDManager()) {
@@ -15,5 +17,28 @@ public final class PlayerUIState {
 
     public func showControlsTemporarily() {
         controlsVisibilityTrigger &+= 1
+    }
+
+    public func showJumpTo(wasPlaying: Bool) {
+        wasPlayingBeforeJumpTo = wasPlaying
+        isJumpToPresented = true
+    }
+
+    @discardableResult
+    public func dismissJumpTo() -> Bool {
+        isJumpToPresented = false
+        let shouldResume = wasPlayingBeforeJumpTo
+        wasPlayingBeforeJumpTo = false
+        return shouldResume
+    }
+
+    public func toggleJumpTo(isPlaying: Bool) -> (presented: Bool, shouldResume: Bool) {
+        if isJumpToPresented {
+            let resume = dismissJumpTo()
+            return (false, resume)
+        } else {
+            showJumpTo(wasPlaying: isPlaying)
+            return (true, false)
+        }
     }
 }

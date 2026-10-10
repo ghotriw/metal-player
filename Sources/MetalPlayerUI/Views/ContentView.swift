@@ -176,6 +176,54 @@ public struct ContentView: View {
                 }
                 .transition(.opacity.animation(.easeInOut(duration: 0.2)))
             }
+
+            // Jump to Time Dialog Overlay
+            if uiState.isJumpToPresented {
+                ZStack {
+                    Color.black.opacity(0.4)
+                        .ignoresSafeArea()
+                        .onTapGesture {
+                            let shouldResume = uiState.dismissJumpTo()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                uiState.isJumpToPresented = false
+                            }
+                            if shouldResume {
+                                engine.play()
+                            }
+                        }
+
+                    JumpToTimeView(
+                        currentTime: engine.currentTime,
+                        duration: engine.duration,
+                        onJump: { targetTime in
+                            let offset = targetTime - engine.currentTime
+                            engine.seek(to: targetTime)
+                            if engine.enableOSD {
+                                uiState.osd.show(
+                                    .seek(offsetSeconds: offset, currentTime: targetTime, duration: engine.duration))
+                            }
+                            let shouldResume = uiState.dismissJumpTo()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                uiState.isJumpToPresented = false
+                            }
+                            if shouldResume {
+                                engine.play()
+                            }
+                        },
+                        onCancel: {
+                            let shouldResume = uiState.dismissJumpTo()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                uiState.isJumpToPresented = false
+                            }
+                            if shouldResume {
+                                engine.play()
+                            }
+                        }
+                    )
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                .zIndex(100)
+            }
         }
         .frame(minWidth: 700, minHeight: 450)
         .onContinuousHover { phase in
@@ -190,6 +238,13 @@ public struct ContentView: View {
             if interacting {
                 hideTimer?.cancel()
                 withAnimation { isControlsVisible = true }
+            } else {
+                scheduleControlsHide()
+            }
+        }
+        .onChange(of: uiState.isJumpToPresented) { _, presented in
+            if presented {
+                hideTimer?.cancel()
             } else {
                 scheduleControlsHide()
             }
@@ -217,11 +272,11 @@ public struct ContentView: View {
     }
 
     private func scheduleControlsHide() {
-        guard engine.isLoaded, !isUserInteracting else { return }
+        guard engine.isLoaded, !isUserInteracting, !uiState.isJumpToPresented else { return }
         hideTimer?.cancel()
         hideTimer = Task {
             try? await Task.sleep(nanoseconds: 2_500_000_000)
-            if !Task.isCancelled && !isUserInteracting {
+            if !Task.isCancelled && !isUserInteracting && !uiState.isJumpToPresented {
                 withAnimation {
                     isControlsVisible = false
                 }

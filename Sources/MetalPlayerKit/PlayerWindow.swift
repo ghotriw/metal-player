@@ -72,7 +72,11 @@ public final class PlayerWindow: NSWindow {
         case 0x03:  // Physical 'F' (ANSI F) -> Toggle Fullscreen on any layout
             actionHandler.toggleFullscreen()
             return true
-        case 0x35:  // Escape -> Exit Fullscreen if active
+        case 0x35:  // Escape -> Dismiss Jump to Time if active, or Exit Fullscreen if active
+            if actionHandler.isJumpToPresented {
+                actionHandler.dismissJumpToTime()
+                return true
+            }
             if styleMask.contains(.fullScreen) {
                 actionHandler.exitFullscreen()
                 return true
