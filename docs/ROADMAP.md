@@ -21,7 +21,7 @@ The goal is to evolve the dual-engine video rendering core into a complete stand
 
 ```mermaid
 flowchart TD
-    M1["Stage 1: H.264 / HEVC / DV P5 / HLG ✅"] --> M15["Stage 1.5: Dolby Vision Profile 8/8.1 RPU Engine"]
+    M1["Stage 1: H.264 / HEVC / DV P5 / HLG ✅"] --> M15["Stage 1.5: Dolby Vision Profile 8.1 / 8.4 RPU Engine"]
     M15 --> M2["Stage 2: Audio Pipeline ✅"]
     M2 --> M3["Stage 3: Network & Remote Streaming"]
     M3 --> M4["Stage 4: Subtitles Subsystem SRT/VTT ✅"]
@@ -55,17 +55,18 @@ flowchart TD
 
 ---
 
-### Stage 1.5: Dynamic HDR & Dolby Vision Profile 8/8.1 RPU Engine
-> Full frame-by-frame dynamic metadata adaptation (SMPTE ST 2094-10) for Web-DL and UHD Blu-ray rips.
+### Stage 1.5: Dynamic HDR & Dolby Vision Profile 8 (8.1 / 8.4) Engine
+> Dynamic metadata adaptation (SMPTE ST 2094-10) for Web-DL, UHD Blu-ray rips, and iPhone HDR video.
 
-- [ ] **1.5.1. DOVI RPU Extraction (FFmpeg / NAL SEI Prefix):**
-  - Detect and extract Dolby Vision RPU bitstream (`AV_PKT_DATA_DOVI_CONF` side data or `NAL_UNSPEC62` NAL units).
-  - Parse Dolby Vision Level 1 (L1) dynamic metadata: frame-accurate `min_pq`, `max_pq`, and `avg_pq`.
-- [ ] **1.5.2. Adaptive Scene-by-Scene Tone Mapping:**
+- [x] **1.5.1. Profile Detection & Hardware Decoding:**
+  - Parse `dvvC` / `dvcC` configuration boxes from extradata and stream side data (`AV_PKT_DATA_DOVI_CONF`).
+  - Distinguish Profile 5 (ICtCp), Profile 8.1 (HDR10 PQ), Profile 8.2 (SDR BT.709), Profile 8.4 (BT.2100 HLG), and Profile 7.
+  - Construct Apple-compliant `CMVideoFormatDescription` with `kCMVideoCodecType_DolbyVisionHEVC` (`dvh1`), enabling VideoToolbox hardware decoding of the base layer with `DolbyVisionRPUData` sample buffer attachments.
+- [ ] **1.5.2. DOVI RPU Bitstream Parsing (Level 1 Metadata):**
+  - Parse Dolby Vision Level 1 (L1) dynamic metadata from RPU payload: frame-accurate `min_pq`, `max_pq`, and `avg_pq`.
+- [ ] **1.5.3. Adaptive Scene-by-Scene Tone Mapping:**
   - Forward dynamic L1 target parameters with frame PTS through `FrameQueue`.
   - Feed dynamic shot peak luminance directly into `HDRToneMapping.metal`, adjusting EETF kneepoints on the fly (retaining shadow details in dark scenes without blowing out highlights).
-- [ ] **1.5.3. Hybrid Profile Detection:**
-  - Distinguish Profile 5 (native ICtCp colorspace) vs Profile 8/8.1 (standard BT.2020 YCbCr base layer + dynamic RPU metadata) vs Profile 7 (FEL/MEL fallback to HDR10/BL).
 
 ---
 

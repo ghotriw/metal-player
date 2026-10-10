@@ -7,6 +7,33 @@ public final class VTVideoDecoder: @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock()
     private var session: VTDecompressionSession?
     private var currentFormatDescription: CMFormatDescription?
+    private var lastCreationStatus: OSStatus = noErr
+    private var _lastDecodeStatus: OSStatus = noErr
+    private var _lastCallbackStatus: OSStatus = noErr
+
+    public var lastDecodeStatus: OSStatus {
+        lock.lock()
+        defer { lock.unlock() }
+        return _lastDecodeStatus
+    }
+
+    public var lastCallbackStatus: OSStatus {
+        lock.lock()
+        defer { lock.unlock() }
+        return _lastCallbackStatus
+    }
+
+    public var hasActiveSession: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return session != nil
+    }
+
+    public var sessionStatus: OSStatus {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastCreationStatus
+    }
 
     public struct DecodedFrame: @unchecked Sendable {
         public let pixelBuffer: CVPixelBuffer
@@ -34,18 +61,19 @@ public final class VTVideoDecoder: @unchecked Sendable {
     }
 
     public func decode(sampleBuffer: CMSampleBuffer) {
-        lock.lock()
-        defer { lock.unlock() }
-
         guard let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) else {
             return
         }
 
+        lock.lock()
         if session == nil || currentFormatDescription != formatDesc {
             createSession(formatDescription: formatDesc)
         }
-
-        guard let session else { return }
+        guard let activeSession = session else {
+            lock.unlock()
+            return
+        }
+        lock.unlock()
 
         // Check if sample has kCMSampleAttachmentKey_DoNotDisplay
         var doNotDisplay = false
@@ -61,13 +89,16 @@ public final class VTVideoDecoder: @unchecked Sendable {
         let refCon = UnsafeMutableRawPointer(bitPattern: doNotDisplay ? 1 : 0)
 
         var infoFlags = VTDecodeInfoFlags()
-        _ = VTDecompressionSessionDecodeFrame(
-            session,
+        let status = VTDecompressionSessionDecodeFrame(
+            activeSession,
             sampleBuffer: sampleBuffer,
             flags: [._EnableAsynchronousDecompression],
             frameRefcon: refCon,
             infoFlagsOut: &infoFlags
         )
+        lock.lock()
+        self._lastDecodeStatus = status
+        lock.unlock()
     }
 
     private func createSession(formatDescription: CMFormatDescription) {
@@ -93,6 +124,7 @@ public final class VTVideoDecoder: @unchecked Sendable {
             depth > 24 || transfer == (kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ as String)
             || transfer == (kCVImageBufferTransferFunction_ITU_R_2100_HLG as String)
             || mediaSubType == kCMVideoCodecType_HEVC || mediaSubType == kCMVideoCodecType_HEVCWithAlpha
+            || mediaSubType == kCMVideoCodecType_DolbyVisionHEVC
 
         if is10Bit {
             pixelFormat =
@@ -117,9 +149,12 @@ public final class VTVideoDecoder: @unchecked Sendable {
                     decompressionOutputRefCon, sourceFrameRefCon, status, infoFlags, imageBuffer, presentationTimeStamp,
                     presentationDuration
                 ) in
-                guard status == noErr, let imageBuffer else { return }
                 guard let refCon = decompressionOutputRefCon else { return }
                 let decoder = Unmanaged<VTVideoDecoder>.fromOpaque(refCon).takeUnretainedValue()
+                decoder.lock.lock()
+                decoder._lastCallbackStatus = status
+                decoder.lock.unlock()
+                guard status == noErr, let imageBuffer else { return }
                 let doNotDisplay = (Int(bitPattern: sourceFrameRefCon) == 1)
                 let frame = DecodedFrame(
                     pixelBuffer: imageBuffer,
@@ -146,6 +181,7 @@ public final class VTVideoDecoder: @unchecked Sendable {
             decompressionSessionOut: &newSession
         )
 
+        self.lastCreationStatus = status
         if status == noErr {
             self.session = newSession
         } else {

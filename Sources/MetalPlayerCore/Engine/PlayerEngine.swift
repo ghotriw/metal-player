@@ -1053,7 +1053,10 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 return "BT.2020"
             }()
             let transferStr: String = {
-                if demuxer.isDolbyVisionProfile5 { return "Dolby Vision (ICtCp)" }
+                if demuxer.isDolbyVisionProfile5 { return "Dolby Vision (Profile 5 ICtCp)" }
+                if let dvStr = demuxer.dolbyVisionProfileString {
+                    return "Dolby Vision (Profile \(dvStr))"
+                }
                 if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_709_2
                     || demuxer.transferFunction == kCVImageBufferTransferFunction_UseGamma
                 {

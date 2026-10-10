@@ -330,15 +330,43 @@ public final class MediaDemuxer: @unchecked Sendable {
     public private(set) var width: Int = 0
     public private(set) var height: Int = 0
     public private(set) var maxPeakNits: Float = 1000.0
-    public private(set) var colorPrimaries: CFString = kCVImageBufferColorPrimaries_ITU_R_2020
-    public private(set) var transferFunction: CFString = kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
-    public private(set) var yCbCrMatrix: CFString = kCVImageBufferYCbCrMatrix_ITU_R_2020
+    public private(set) var colorPrimaries: CFString = kCVImageBufferColorPrimaries_ITU_R_709_2
+    public private(set) var transferFunction: CFString = kCVImageBufferTransferFunction_ITU_R_709_2
+    public private(set) var yCbCrMatrix: CFString = kCVImageBufferYCbCrMatrix_ITU_R_709_2
     public private(set) var isFullRange: Bool = false
     public private(set) var bitDepth: Int = 8
     public private(set) var isDolbyVisionProfile5: Bool = false
+    public private(set) var dolbyVisionProfile: Int? = nil
+    public private(set) var dolbyVisionCompatibilityId: Int? = nil
+    public private(set) var dolbyVisionConfigData: Data? = nil
+    public var dolbyVisionProfileString: String? {
+        guard let p = dolbyVisionProfile else { return nil }
+        if p == 8 {
+            if let cid = dolbyVisionCompatibilityId {
+                if cid == 1 { return "8.1" }
+                if cid == 2 { return "8.2" }
+                if cid == 4 { return "8.4" }
+                return "8 (Compat \(cid))"
+            }
+            return "8.1"
+        }
+        if p == 5 { return "5" }
+        if p == 7 { return "7" }
+        if p == 9 { return "9" }
+        return "\(p)"
+    }
     public private(set) var isAnnexBStream: Bool = false
     public var isHDR: Bool {
         if isDolbyVisionProfile5 { return true }
+        if let p = dolbyVisionProfile {
+            // Profile 8.2 has an SDR (BT.709) base layer; Profile 8.1 (PQ) and 8.4 (HLG) are HDR
+            if p == 8 {
+                if dolbyVisionCompatibilityId == 2 { return false }
+                return true
+            }
+            if p == 5 || p == 7 { return true }
+            if p == 9 { return false }  // Profile 9 is 8-bit AVC / SDR base layer
+        }
         if transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
             || transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG
         {
@@ -499,7 +527,7 @@ public final class MediaDemuxer: @unchecked Sendable {
                     case AVCOL_PRI_SMPTE432:
                         self.colorPrimaries = kCVImageBufferColorPrimaries_P3_D65
                     default:
-                        self.colorPrimaries = kCVImageBufferColorPrimaries_ITU_R_2020
+                        self.colorPrimaries = kCVImageBufferColorPrimaries_ITU_R_709_2
                     }
                 }
 
@@ -521,7 +549,7 @@ public final class MediaDemuxer: @unchecked Sendable {
                     case AVCOL_TRC_LINEAR:
                         self.transferFunction = kCVImageBufferTransferFunction_Linear
                     default:
-                        self.transferFunction = kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
+                        self.transferFunction = kCVImageBufferTransferFunction_ITU_R_709_2
                     }
                 }
 
@@ -539,7 +567,7 @@ public final class MediaDemuxer: @unchecked Sendable {
                     case AVCOL_SPC_SMPTE170M, AVCOL_SPC_SMPTE240M:
                         self.yCbCrMatrix = kCVImageBufferYCbCrMatrix_SMPTE_240M_1995
                     default:
-                        self.yCbCrMatrix = kCVImageBufferYCbCrMatrix_ITU_R_2020
+                        self.yCbCrMatrix = kCVImageBufferYCbCrMatrix_ITU_R_709_2
                     }
                 }
 
@@ -563,29 +591,68 @@ public final class MediaDemuxer: @unchecked Sendable {
                     self.bitDepth = 8
                 }
 
-                // Dolby Vision Profile 5 detection:
+                // Dolby Vision Detection (Profiles 5, 8.1, 8.4):
+                // In MP4/MKV it is identified by dvvC/dvcC box (or stream side data).
                 // Profile 5 uses IPTc2 color space with PQ transfer function.
-                // In MP4/MKV it is identified by dvvC/dvcC box (dv_profile == 5)
-                // or DOVI side data in stream.
+                // Profile 8 uses standard BT.2020 PQ (8.1) or HLG (8.4) with dynamic RPU metadata.
                 if let extradata = stream.pointee.codecpar.pointee.extradata,
                     stream.pointee.codecpar.pointee.extradata_size >= 24
                 {
                     let extraDataSize = Int(stream.pointee.codecpar.pointee.extradata_size)
-                    let extraBytes = UnsafeBufferPointer(start: extradata, count: extraDataSize)
-                    for k in 0..<(extraDataSize - 8) {
-                        // Check for 'dvcC' or 'dvvC' fourcc
-                        if (extraBytes[k] == 0x64 && extraBytes[k + 1] == 0x76 && extraBytes[k + 2] == 0x63
-                            && extraBytes[k + 3] == 0x43)
-                            || (extraBytes[k] == 0x64 && extraBytes[k + 1] == 0x76 && extraBytes[k + 2] == 0x76
-                                && extraBytes[k + 3] == 0x43)
-                        {
-                            // dv_profile is in the high 7 bits of byte at offset + 6
-                            let dvProfile = (extraBytes[k + 6] >> 1) & 0x7F
-                            if dvProfile == 5 {
-                                self.isDolbyVisionProfile5 = true
+                    let extraData = Data(bytes: extradata, count: extraDataSize)
+                    if let parsed = Self.parseDolbyVisionConfigurationBox(from: extraData) {
+                        self.dolbyVisionProfile = parsed.profile
+                        self.dolbyVisionCompatibilityId = parsed.compatibilityId
+                        self.dolbyVisionConfigData = parsed.configData
+                        self.bitDepth = 10
+                        if parsed.profile == 5 {
+                            self.isDolbyVisionProfile5 = true
+                        }
+                        AppLog.info(
+                            .video,
+                            "Detected Dolby Vision Profile \(parsed.profile) (dvcC/dvvC payload: \(parsed.configData.count) bytes, compatibility id: \(parsed.compatibilityId))"
+                        )
+                    }
+                }
+
+                // If not found in raw extradata box, check FFmpeg stream side data (standard for MKV/Matroska)
+                if self.dolbyVisionProfile == nil {
+                    let sideDataCount = Int(stream.pointee.codecpar.pointee.nb_coded_side_data)
+                    if sideDataCount > 0, let sideDataList = stream.pointee.codecpar.pointee.coded_side_data {
+                        for s in 0..<sideDataCount {
+                            let sd = sideDataList[s]
+                            if sd.type == AV_PKT_DATA_DOVI_CONF, let sdData = sd.data,
+                                sd.size >= MemoryLayout<AVDOVIDecoderConfigurationRecord>.size
+                            {
+                                let doviConf = UnsafeMutableRawPointer(sdData).assumingMemoryBound(
+                                    to: AVDOVIDecoderConfigurationRecord.self)
+                                let dvProfile = Int(doviConf.pointee.dv_profile)
+                                let compatId = Int(doviConf.pointee.dv_bl_signal_compatibility_id & 0x0F)
+                                self.dolbyVisionProfile = dvProfile
+                                self.dolbyVisionCompatibilityId = compatId
                                 self.bitDepth = 10
+                                if dvProfile == 5 {
+                                    self.isDolbyVisionProfile5 = true
+                                }
+                                // Construct standard 24-byte DOVI configuration box payload per ISO/IEC 14496-15
+                                var boxPayload = [UInt8](repeating: 0, count: 24)
+                                boxPayload[0] = doviConf.pointee.dv_version_major
+                                boxPayload[1] = doviConf.pointee.dv_version_minor
+                                let p = doviConf.pointee.dv_profile
+                                let l = doviConf.pointee.dv_level
+                                let rpu = doviConf.pointee.rpu_present_flag & 0x01
+                                let el = doviConf.pointee.el_present_flag & 0x01
+                                let bl = doviConf.pointee.bl_present_flag & 0x01
+                                boxPayload[2] = ((p & 0x7F) << 1) | ((l >> 5) & 0x01)
+                                boxPayload[3] = ((l & 0x1F) << 3) | (rpu << 2) | (el << 1) | bl
+                                boxPayload[4] = UInt8(compatId << 4)
+                                self.dolbyVisionConfigData = Data(boxPayload)
+                                AppLog.info(
+                                    .video,
+                                    "Detected Dolby Vision Profile \(dvProfile) via FFmpeg side data (compatibility id: \(compatId))"
+                                )
+                                break
                             }
-                            break
                         }
                     }
                 }
@@ -691,6 +758,30 @@ public final class MediaDemuxer: @unchecked Sendable {
             }
         } else {
             avformat_close_input(&self.formatCtx)
+            return nil
+        }
+    }
+
+    /// Parses an ISOBMFF dvcC/dvvC Dolby Vision configuration box from extradata.
+    public static func parseDolbyVisionConfigurationBox(from data: Data) -> (
+        profile: Int, compatibilityId: Int, configData: Data
+    )? {
+        guard data.count >= 24 else { return nil }
+        return data.withUnsafeBytes { raw in
+            let bytes = raw.bindMemory(to: UInt8.self)
+            let count = bytes.count
+            for k in 0..<(count - 8) {
+                let isDvcC = (bytes[k] == 0x64 && bytes[k + 1] == 0x76 && bytes[k + 2] == 0x63 && bytes[k + 3] == 0x43)
+                let isDvvC = (bytes[k] == 0x64 && bytes[k + 1] == 0x76 && bytes[k + 2] == 0x76 && bytes[k + 3] == 0x43)
+                if isDvcC || isDvvC {
+                    let dvProfile = Int((bytes[k + 6] >> 1) & 0x7F)
+                    let compatId = Int((bytes[k + 8] >> 4) & 0x0F)
+                    let boxPayloadStart = k + 4
+                    guard count - boxPayloadStart >= 24 else { return nil }
+                    let configData = Data(bytes[boxPayloadStart..<(boxPayloadStart + 24)])
+                    return (profile: dvProfile, compatibilityId: compatId, configData: configData)
+                }
+            }
             return nil
         }
     }
@@ -912,6 +1003,7 @@ public final class MediaDemuxer: @unchecked Sendable {
                         ]
                         let sizes: [Int] = [vpsData.count, spsData.count, ppsData.count]
 
+                        var baseFormatDesc: CMVideoFormatDescription?
                         _ = CMVideoFormatDescriptionCreateFromHEVCParameterSets(
                             allocator: kCFAllocatorDefault,
                             parameterSetCount: 3,
@@ -919,8 +1011,10 @@ public final class MediaDemuxer: @unchecked Sendable {
                             parameterSetSizes: sizes,
                             nalUnitHeaderLength: 4,
                             extensions: extensionsDict as CFDictionary,
-                            formatDescriptionOut: &formatDesc
+                            formatDescriptionOut: &baseFormatDesc
                         )
+
+                        formatDesc = baseFormatDesc
                     }
                 }
             }
@@ -941,6 +1035,40 @@ public final class MediaDemuxer: @unchecked Sendable {
                         nalUnitHeaderLength: 4,
                         formatDescriptionOut: &formatDesc
                     )
+                }
+            }
+        }
+
+        if codec == .hevc, let baseDesc = formatDesc, let doviData = dolbyVisionConfigData,
+            let dvProfile = dolbyVisionProfile
+        {
+            // For Dolby Vision HEVC (Profile 5, 8.1, etc.), attach the standard configuration box (dvcC for <= 7, dvvC for > 7)
+            // and use kCMVideoCodecType_DolbyVisionHEVC ('dvh1') so VideoToolbox decodes the HEVC base layer
+            // and parses dynamic DolbyVisionRPUData into CVPixelBuffer attachments.
+            let atomKey = dvProfile <= 7 ? "dvcC" : "dvvC"
+            if let rawExts = CMFormatDescriptionGetExtensions(baseDesc) as? [String: Any] {
+                var newExts = rawExts
+                var atoms =
+                    (rawExts[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms as String] as? [String: Any])
+                    ?? [:]
+                atoms[atomKey] = doviData
+                newExts[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms as String] = atoms
+
+                var dvDesc: CMVideoFormatDescription?
+                let status = CMVideoFormatDescriptionCreate(
+                    allocator: kCFAllocatorDefault,
+                    codecType: kCMVideoCodecType_DolbyVisionHEVC,
+                    width: Int32(self.width),
+                    height: Int32(self.height),
+                    extensions: newExts as CFDictionary,
+                    formatDescriptionOut: &dvDesc
+                )
+                if status == noErr, let dvDesc {
+                    AppLog.info(
+                        .video,
+                        "Configured Dolby Vision formatDescription (Profile \(dvProfile), codec: dvh1, atom: \(atomKey))"
+                    )
+                    return dvDesc
                 }
             }
         }

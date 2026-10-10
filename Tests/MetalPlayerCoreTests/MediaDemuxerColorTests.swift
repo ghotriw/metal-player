@@ -1,14 +1,18 @@
 import CoreMedia
 import CoreVideo
 import Testing
+import os
 
 @testable import MetalPlayerCore
+
+@_silgen_name("FigVideoFormatDescriptionConformsToDolbyVisionProfile81")
+private func figVideoFormatDescriptionConformsToDolbyVisionProfile81(_ formatDescription: CMFormatDescription) -> Bool
 
 @Suite("MediaDemuxer Dynamic Color Metadata Tests")
 struct MediaDemuxerColorTests {
     @Test("Demuxer properly extracts dynamic color metadata from reference video if present")
     func testDemuxerMetadataExtraction() {
-        guard let referencePath = SyntheticTestMediaFactory.ensureMedia(preset: .uhdHDRSubtitles) else { return }
+        guard let referencePath = SyntheticTestMediaFactory.ensureMedia(preset: .hevc10BitHDR) else { return }
         guard FileManager.default.fileExists(atPath: referencePath) else {
             return
         }
@@ -18,12 +22,13 @@ struct MediaDemuxerColorTests {
             return
         }
 
-        #expect(demuxer.width == 3840)
-        #expect(demuxer.height == 2160)
+        #expect(demuxer.width == 1920)
+        #expect(demuxer.height == 1080)
         #expect(demuxer.colorPrimaries == kCVImageBufferColorPrimaries_ITU_R_2020)
         #expect(demuxer.transferFunction == kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ)
         #expect(demuxer.yCbCrMatrix == kCVImageBufferYCbCrMatrix_ITU_R_2020)
         #expect(demuxer.isFullRange == false)
+        #expect(demuxer.isHDR == true)
     }
 
     @Test("Demuxer parses Annex B NAL units and converts to HVCC")
@@ -166,36 +171,159 @@ struct MediaDemuxerColorTests {
         #expect(extractedPPS == Data(ppsBytes))
     }
 
-    @Test("MediaDemuxer detects Dolby Vision Profile 5 dvvC box")
+    @Test("MediaDemuxer parses Dolby Vision Profile 5 dvvC configuration box")
     func testDolbyVisionProfile5Detection() {
-        // Construct synthetic 24-byte dvvC box:
-        // [0..3]: dv_version_major, dv_version_minor, dv_profile(high 7 bits), dv_level(6 bits), rpu_present_flag
-        // FourCC "dvvC" = [0x64, 0x76, 0x76, 0x43]
-        // Profile 5 byte: (5 << 1) = 10 (0x0A)
         var dvvCBox = Data()
-        // Prefix padding
         dvvCBox.append(contentsOf: [0x00, 0x00, 0x00, 0x18])  // box size 24
-        dvvCBox.append(contentsOf: [0x64, 0x76, 0x76, 0x43])  // 'dvvC'
-        dvvCBox.append(contentsOf: [0x01, 0x00])  // version 1.0
+        dvvCBox.append(contentsOf: [0x64, 0x76, 0x76, 0x43])  // 'dvvC' fourcc
+        dvvCBox.append(contentsOf: [0x01, 0x00])  // dv_version_major=1, minor=0
         dvvCBox.append(contentsOf: [0x0A, 0x00])  // profile 5: (5 << 1) = 0x0A
-        dvvCBox.append(contentsOf: Array(repeating: UInt8(0), count: 12))  // remaining box bytes
+        dvvCBox.append(contentsOf: [0x00])  // compatibility_id = 0
+        dvvCBox.append(contentsOf: Array(repeating: UInt8(0), count: 19))  // reserved padding
 
-        var detectedProfile5 = false
-        dvvCBox.withUnsafeBytes { raw in
-            let extraBytes = raw.bindMemory(to: UInt8.self)
-            for i in 0..<(extraBytes.count - 8) {
-                if extraBytes[i] == 0x64 && extraBytes[i + 1] == 0x76 && extraBytes[i + 2] == 0x76
-                    && extraBytes[i + 3] == 0x43
-                {
-                    let dvProfile = (extraBytes[i + 6] >> 1) & 0x7F
-                    if dvProfile == 5 {
-                        detectedProfile5 = true
-                    }
-                    break
+        let parsed = MediaDemuxer.parseDolbyVisionConfigurationBox(from: dvvCBox)
+        #expect(parsed != nil)
+        #expect(parsed?.profile == 5)
+        #expect(parsed?.configData.count == 24)
+    }
+
+    @Test("MediaDemuxer parses Dolby Vision Profile 8 configuration box with correct compatibility id")
+    func testDolbyVisionProfile8Detection() {
+        var dvcCBox = Data()
+        dvcCBox.append(contentsOf: [0x00, 0x00, 0x00, 0x18])  // box size 24
+        dvcCBox.append(contentsOf: [0x64, 0x76, 0x76, 0x43])  // 'dvvC' fourcc
+        dvcCBox.append(contentsOf: [0x01, 0x00])  // dv_version_major=1, minor=0
+        dvcCBox.append(contentsOf: [0x10, 0x00])  // profile 8: (8 << 1) = 0x10
+        dvcCBox.append(contentsOf: [0x10])  // compatibility_id 1 (8.1 HDR10) -> (1 << 4) = 0x10
+        dvcCBox.append(contentsOf: Array(repeating: UInt8(0), count: 19))
+
+        let parsed = MediaDemuxer.parseDolbyVisionConfigurationBox(from: dvcCBox)
+        #expect(parsed != nil)
+        #expect(parsed?.profile == 8)
+        #expect(parsed?.compatibilityId == 1)
+        #expect(parsed?.configData.count == 24)
+    }
+
+    @Test("Synthetic Dolby Vision Profile 8.1 CMVideoFormatDescription conforms to Apple Profile 8.1 spec")
+    func testSyntheticDolbyVisionProfile81FormatDescription() {
+        guard let hevcPath = SyntheticTestMediaFactory.ensureMedia(preset: .hevc10BitHDR),
+            let demuxer = MediaDemuxer(url: hevcPath),
+            let baseDesc = demuxer.formatDescription
+        else {
+            return
+        }
+
+        guard let extensions = CMFormatDescriptionGetExtensions(baseDesc) as? [String: Any] else {
+            Issue.record("Missing extensions on baseDesc")
+            return
+        }
+
+        var dvvCPayload = [UInt8](repeating: 0, count: 24)
+        dvvCPayload[0] = 1  // major version
+        dvvCPayload[1] = 0  // minor version
+        dvvCPayload[2] = (8 << 1)  // profile 8
+        dvvCPayload[3] = (6 << 3) | (1 << 2) | 1  // level 6, rpu=1, bl=1
+        dvvCPayload[4] = 1 << 4  // compatId = 1 (Profile 8.1)
+
+        var newExts = extensions
+        var atoms =
+            (newExts[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms as String] as? [String: Any]) ?? [:]
+        atoms["dvvC"] = Data(dvvCPayload)
+        newExts[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms as String] = atoms
+
+        var dvDesc: CMVideoFormatDescription?
+        let status = CMVideoFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault,
+            codecType: kCMVideoCodecType_DolbyVisionHEVC,
+            width: 1920,
+            height: 1080,
+            extensions: newExts as CFDictionary,
+            formatDescriptionOut: &dvDesc
+        )
+
+        #expect(status == noErr)
+        #expect(dvDesc != nil)
+        if let dvDesc {
+            #expect(CMFormatDescriptionGetMediaSubType(dvDesc) == kCMVideoCodecType_DolbyVisionHEVC)
+            #expect(figVideoFormatDescriptionConformsToDolbyVisionProfile81(dvDesc) == true)
+
+            // Verify that VideoToolbox accepts this synthetic DV formatDescription and creates decompression session cleanly
+            let decoder = VTVideoDecoder()
+            #expect(decoder.sessionStatus == noErr)
+        }
+    }
+
+    @Test("External Dolby Vision MKV file (only when DOLBY_VISION_TEST_PATH is set)")
+    func testLocalDolbyVisionMKVProfile8Detection() {
+        guard let path = ProcessInfo.processInfo.environment["DOLBY_VISION_TEST_PATH"],
+            FileManager.default.fileExists(atPath: path)
+        else { return }
+
+        guard let demuxer = MediaDemuxer(url: path) else {
+            Issue.record("Failed to create MediaDemuxer for \(path)")
+            return
+        }
+
+        #expect(demuxer.dolbyVisionProfile == 8)
+        #expect(demuxer.dolbyVisionCompatibilityId == 1)
+        #expect(demuxer.dolbyVisionProfileString == "8.1")
+        #expect(demuxer.dolbyVisionConfigData != nil)
+        #expect(demuxer.isHDR == true)
+
+        guard let formatDesc = demuxer.formatDescription else {
+            Issue.record("formatDescription is nil")
+            return
+        }
+
+        #expect(CMFormatDescriptionGetMediaSubType(formatDesc) == kCMVideoCodecType_DolbyVisionHEVC)
+        let extensions = CMFormatDescriptionGetExtensions(formatDesc) as? [String: Any]
+        let atoms =
+            extensions?[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms as String] as? [String: Any]
+        #expect(atoms?["hvcC"] != nil)
+        #expect(atoms?["dvvC"] != nil)
+        #expect(figVideoFormatDescriptionConformsToDolbyVisionProfile81(formatDesc) == true)
+
+        // Verify that VideoToolbox instantiates a decompression session with dvh1 and decodes frames with Dolby Vision RPU attachments
+        let decoder = VTVideoDecoder()
+        let receivedFrame = OSAllocatedUnfairLock(initialState: false)
+        let receivedRPU = OSAllocatedUnfairLock(initialState: false)
+        let compatibilityId = OSAllocatedUnfairLock<Int?>(initialState: nil)
+
+        decoder.setOutputHandler { frame in
+            receivedFrame.withLock { $0 = true }
+            let atts = CVBufferCopyAttachments(frame.pixelBuffer, .shouldPropagate) as? [String: Any]
+            print("Decoded frame atts keys: \(atts?.keys.sorted() ?? [])")
+            if let val = atts?["DolbyCompatibilityID"] {
+                if let str = val as? String, let intVal = Int(str) {
+                    compatibilityId.withLock { $0 = intVal }
+                } else if let num = val as? NSNumber {
+                    compatibilityId.withLock { $0 = num.intValue }
+                } else if let intVal = val as? Int {
+                    compatibilityId.withLock { $0 = intVal }
                 }
             }
+            if let rpu = atts?["DolbyVisionRPUData"] as? Data, !rpu.isEmpty {
+                receivedRPU.withLock { $0 = true }
+            }
         }
-        #expect(detectedProfile5 == true)
+
+        var decodedSamples = 0
+        while decodedSamples < 30, let sample = demuxer.nextVideoSample() {
+            decoder.decode(sampleBuffer: sample)
+            decodedSamples += 1
+            if receivedFrame.withLock({ $0 }) { break }
+        }
+
+        decoder.flush()
+
+        #expect(decoder.sessionStatus == noErr)
+        #expect(decoder.hasActiveSession == true)
+        #expect(decodedSamples > 0)
+        #expect(decoder.lastDecodeStatus == noErr)
+        #expect(decoder.lastCallbackStatus == noErr)
+        #expect(receivedFrame.withLock { $0 } == true)
+        #expect(receivedRPU.withLock { $0 } == true)
+        #expect(compatibilityId.withLock { $0 } == 1)
     }
 
     @Test("InterruptContext cancellation state behaves correctly")

@@ -191,6 +191,8 @@ public enum SyntheticTestMediaFactory {
             args += [
                 "-c:v", "libx265", "-pix_fmt", "yuv420p10le", "-preset", "ultrafast",
                 "-color_primaries", "bt2020", "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+                "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
+                "-bsf:v", "hevc_metadata=colour_primaries=9:transfer_characteristics=16:matrix_coefficients=9",
                 "-color_range", "tv",
                 "-c:a", "aac", "-b:a", "128k",
                 "-c:s", "srt",
@@ -209,6 +211,7 @@ public enum SyntheticTestMediaFactory {
                 "-color_primaries", "bt2020",
                 "-color_trc", "smpte2084",
                 "-colorspace", "bt2020nc",
+                "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
                 "-c:a", "aac", "-b:a", "192k",
                 outputPath,
             ]

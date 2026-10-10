@@ -79,45 +79,46 @@ Deliver reference-grade playback of HDR and Dolby Vision (Profile 8.1 / HDR10) v
 
 ## 2. Decoupled Architecture & Layer Boundaries
 
-The codebase is split into three strictly separated layers to prevent UI changes from polluting or breaking low-level media pipelines:
+The codebase is split into strictly separated modular layers to prevent UI changes from polluting or breaking low-level media pipelines:
 
 ```
-[UI / Presentation Layer (SwiftUI / AppKit)]
-               ↓ (observes state & calls user intent actions)
-[ViewModel / Facade Layer (@Observable)]
-               ↓ (drives contract protocol)
-[protocol PlayerEngine: AnyObject]
-               ↓ (implemented by headless engine)
-[Headless Engine Core (Metal / VideoToolbox / Demuxer / Synchronizer)]
+[Presentation UI Layer (MetalPlayerUI / AppKit)]
+               ↓ (observes state via @Observable & dispatches actions)
+[Windowing & App Integration Layer (MetalPlayerKit)]
+               ↓ (coordinates window, menus, NowPlaying & delegates)
+[Engine Core & Contract Protocol (MetalPlayerCore)]
+  ├─ protocol PlayerEngineProtocol (@MainActor, Sendable)
+  └─ final class PlayerEngine (@Observable, @MainActor, zero SwiftUI dependency)
+               ↓ (internal subsystems)
+[Low-Level Pipelines (Metal Tone-Mapper / VideoToolbox / Demuxer / Synchronizer)]
 ```
 
-### 2.1. Layer 1: Headless Engine Core (`PlayerEngineCore`)
-- **Zero UI Dependency:** Must never import SwiftUI or depend on UI views, buttons, layouts, or control state.
-- **Responsibilities:** Demuxing, decoding, hardware master clock synchronization, Metal rendering, frame queues, EDR/screen handover.
-- **Public Surface:** Implements `protocol PlayerEngine` and exports a lightweight `NSView` / `CALayer` video canvas (`videoSurface`).
+### 2.1. Layer 1: Headless Engine Core (`PlayerEngine: PlayerEngineProtocol`)
+- **Zero SwiftUI Dependency:** Located in `MetalPlayerCore`. Must never import SwiftUI or depend on UI views, buttons, layouts, or control state.
+- **Responsibilities:** Demuxing, decoding, hardware master clock synchronization, Metal rendering, frame queues, EDR/screen handover, playback history persistence.
+- **Direct SwiftUI Observability:** Employs the Swift `Observation` framework (`@Observable`) directly on `PlayerEngine`. Per Apple's modern architecture standards, field-level observation eliminates redundant intermediate ViewModel wrappers while ensuring UI views re-evaluate only when the specific properties they read change.
+- **Public Surface:** Implements `protocol PlayerEngineProtocol` and exports a lightweight `NSView` video canvas (`NativeVideoHostView`).
 
-### 2.2. Layer 2: Facade & ViewModel (`PlayerViewModel`)
+### 2.2. Layer 2: Windowing & Application Integration (`MetalPlayerKit`)
 - Lives on `@MainActor`.
-- Acts as the single communication bridge between the headless engine and the user interface.
-- Exposes observable properties (`currentTime`, `duration`, `progress`, `playbackState`, `isControlsVisible`, `mediaTitle`) and public user actions (`play()`, `pause()`, `seek(progress:)`, `openFile(url:)`).
+- Manages window lifecycle (`PlayerWindowController`, `PlayerWindow`), menu commands (`PlayerCommands`), and system media integration (`NowPlayingController`).
+- Connects the engine core with the presentation UI without coupling low-level media logic to window state.
 
-### 2.3. Layer 3: Presentation UI (`SwiftUI / AppKit`)
-- Purely declarative UI components (`ControlsOverlay`, `TimelineSlider`, `SettingsSheet`, `HUD`).
-- Consumes `PlayerViewModel` via SwiftUI observation.
+### 2.3. Layer 3: Presentation UI (`MetalPlayerUI`)
+- Purely declarative UI components (`ContentView`, `ControlsOverlay`, `TimelineSlider`, `SettingsView`, `PerformanceHUDView`, `SubtitleOverlayView`).
+- Consumes `PlayerEngine` via Swift Observation and isolates transient UI state (fullscreen transitions, auto-hide triggers) inside lightweight `@Observable class PlayerUIState`.
 - Changing, rewriting, or animating UI components must never impact or require changes to decoding loops, Metal shaders, or A/V sync.
 
 ### 2.4. Host Application & Web-Bridge Embeddability (WKWebView / Headless Integration)
 To support embedding into host applications with web-driven frontends (e.g., `WKWebView` / Emby client), the core must strictly satisfy:
-1. **Headless Video Canvas (`NSView` / `CALayer`):**
-   - The engine must provide a standalone video surface view without imposing any native controls or overlays.
+1. **Headless Video Canvas (`NativeVideoHostView` / `NSView` / `CALayer`):**
+   - The engine provides a standalone video canvas view (`NativeVideoHostView`) without imposing any native controls or overlays.
    - Host applications can place a transparent `WKWebView` above or alongside the video surface, rendering all UI controls in HTML/CSS/JS.
 2. **Bidirectional Bridge Contract (Commands IN, Events OUT):**
-   - **Commands IN:** The engine accepts commands via `PlayerEngine` protocol: `open(url:headers:)`, `play()`, `pause()`, `seek(to:)`, `setVolume()`, `setAudioTrack(id:)`, `setSubtitleTrack(id:)`.
-   - **Events OUT:** The engine emits structured, serializable events suitable for JSON bridging to JavaScript (`window.webkit.messageHandlers`):
-     - `timeUpdate(currentTime:duration:buffered:)`
-     - `playbackStateChanged(state:)` (playing, paused, buffering, ended)
-     - `tracksChanged(audio:subtitles:)`
-     - `error(code:message:)`
+   - **Commands IN:** The engine accepts commands via `PlayerEngineProtocol`: `load(path:headers:)`, `loadAsync(path:headers:)`, `play()`, `pause()`, `seek(to:)`, `stepVolume(by:)`, `selectAudioTrack(id:)`, `selectSubtitleTrack(id:)`.
+   - **Events OUT:** The engine provides explicit callbacks suitable for JSON bridging to JavaScript (`window.webkit.messageHandlers`):
+     - `onTimeUpdate: ((_ currentTime: Double, _ duration: Double) -> Void)?`
+     - `onPlaybackStateChanged: ((PlaybackState) -> Void)?`
 3. **Network Streams & HTTP Authorization:**
    - The demuxing subsystem must not assume local `file://` URLs.
    - Remote streaming via HTTP/HTTPS, HLS, or direct MKV over HTTP must support custom request headers (e.g. `X-Emby-Token`, `Authorization`, custom User-Agent, cookies) via FFmpeg `AVDictionary` options.
