@@ -142,7 +142,7 @@ public struct ContentView: View {
                         OSDOverlayView(event: event)
                             .transition(.opacity.animation(.easeInOut(duration: 0.16)))
                             .padding(.top, 28)
-                            .padding(.leading, 24)
+                            .padding(.leading, 28)
                         Spacer()
                     }
                     Spacer()
@@ -156,8 +156,8 @@ public struct ContentView: View {
                     HStack {
                         Spacer()
                         PerformanceHUDView(engine: engine)
-                            .padding(.top, 46)
-                            .padding(.trailing, 16)
+                            .padding(.top, 28)
+                            .padding(.trailing, 28)
                     }
                     Spacer()
                 }

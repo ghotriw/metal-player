@@ -15,6 +15,43 @@ public final class PlayerPerformanceMonitor: @unchecked Sendable {
     private let logger = Logger(subsystem: "com.metalplayer.app", category: "Performance")
     public let signposter: OSSignposter
 
+    public enum ToneMapEngineMode: String, Sendable, Equatable {
+        case none = ""
+        case doviL2Trim = "DoVi L2 SDR Trim"
+        case doviL1Auto = "DoVi L1 Dynamic"
+        case bt2390 = "Metal BT.2390 EETF"
+        case directSDR = "Direct SDR (Display P3)"
+        case appleXDR = "Apple HDR Passthrough (Direct Scanout)"
+    }
+
+    public struct ToneMapParams: Sendable, Equatable {
+        public var mode: ToneMapEngineMode = .none
+        public var slope: Float = 1.0
+        public var offset: Float = 0.0
+        public var power: Float = 1.0
+        public var saturation: Float = 0.0
+        public var peakNits: Float = 0.0
+        public var targetNits: Float = 203.0
+
+        public init(
+            mode: ToneMapEngineMode = .none,
+            slope: Float = 1.0,
+            offset: Float = 0.0,
+            power: Float = 1.0,
+            saturation: Float = 0.0,
+            peakNits: Float = 0.0,
+            targetNits: Float = 203.0
+        ) {
+            self.mode = mode
+            self.slope = slope
+            self.offset = offset
+            self.power = power
+            self.saturation = saturation
+            self.peakNits = peakNits
+            self.targetNits = targetNits
+        }
+    }
+
     public struct Metrics: Sendable, Equatable {
         // Performance
         public var cpuUsagePercent: Double = 0.0
@@ -40,6 +77,13 @@ public final class PlayerPerformanceMonitor: @unchecked Sendable {
         public var sourcePeakNits: Float = 0
         public var targetNits: Float = 203
         public var avSyncDriftMs: Double = 0.0
+
+        // Dolby Vision & Tone-Mapping details
+        public var dolbyVisionProfile: String? = nil
+        public var toneMapParams: ToneMapParams = ToneMapParams()
+        public var toneMapPipeline: String {
+            toneMapParams.mode.rawValue
+        }
     }
 
     private let metricsLock = OSAllocatedUnfairLock(initialState: Metrics())
@@ -154,7 +198,8 @@ public final class PlayerPerformanceMonitor: @unchecked Sendable {
         colorPrimaries: String,
         transferFunction: String,
         sourcePeakNits: Float,
-        targetNits: Float
+        targetNits: Float,
+        dolbyVisionProfile: String? = nil
     ) {
         metricsLock.withLock { metrics in
             metrics.resolution = resolution
@@ -164,6 +209,18 @@ public final class PlayerPerformanceMonitor: @unchecked Sendable {
             metrics.transferFunction = transferFunction
             metrics.sourcePeakNits = sourcePeakNits
             metrics.targetNits = targetNits
+            metrics.dolbyVisionProfile = dolbyVisionProfile
+        }
+    }
+
+    /// Updates dynamic tone-mapping parameters if changed (comparing raw numeric values without heap allocation).
+    public func updateToneMapParams(_ params: ToneMapParams) {
+        metricsLock.withLock { metrics in
+            if metrics.toneMapParams != params {
+                metrics.toneMapParams = params
+                metrics.sourcePeakNits = params.peakNits
+                metrics.targetNits = params.targetNits
+            }
         }
     }
 

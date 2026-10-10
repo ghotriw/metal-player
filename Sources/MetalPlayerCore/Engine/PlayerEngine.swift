@@ -489,14 +489,36 @@ public final class PlayerEngine: PlayerEngineProtocol {
 
         if newMode == .system {
             isMetalLayerVisible = false
+            performanceMonitor.updateToneMapParams(
+                PlayerPerformanceMonitor.ToneMapParams(mode: .appleXDR)
+            )
             if !isPlaying {
                 renderCurrentFrame()
             }
         } else {
+            let baseMode: PlayerPerformanceMonitor.ToneMapEngineMode = dynamicToneMapLock.withLock { state in
+                if state.lastRenderModeName.contains("DoVi L2") {
+                    return .doviL2Trim
+                } else if state.lastRenderModeName.contains("DoVi L1") {
+                    return .doviL1Auto
+                } else if state.basePeakNits > 105.0 {
+                    return .bt2390
+                } else {
+                    return .directSDR
+                }
+            }
+            let (peak, target) = dynamicToneMapLock.withLock { ($0.basePeakNits, $0.baseTargetNits) }
+            performanceMonitor.updateToneMapParams(
+                PlayerPerformanceMonitor.ToneMapParams(mode: baseMode, peakNits: peak, targetNits: target)
+            )
             if !isPlaying {
                 renderCurrentFrame()
                 isMetalLayerVisible = true
             }
+        }
+
+        if showDebugHUD {
+            currentMetrics = performanceMonitor.currentMetrics
         }
     }
 
@@ -643,6 +665,28 @@ public final class PlayerEngine: PlayerEngineProtocol {
                     uniforms.targetNits = resolved.targetNits
                 }
                 let currentModeName = resolved.modeName
+                let toneMode: PlayerPerformanceMonitor.ToneMapEngineMode
+                if resolved.hasDoViL2Trim == 1 {
+                    toneMode = .doviL2Trim
+                } else if currentModeName.contains("DoVi L1") {
+                    toneMode = .doviL1Auto
+                } else if resolved.peakNits > 105.0 {
+                    toneMode = .bt2390
+                } else {
+                    toneMode = .directSDR
+                }
+
+                performanceMonitor.updateToneMapParams(
+                    PlayerPerformanceMonitor.ToneMapParams(
+                        mode: toneMode,
+                        slope: resolved.slope,
+                        offset: resolved.offset,
+                        power: resolved.power,
+                        saturation: resolved.saturation,
+                        peakNits: resolved.peakNits,
+                        targetNits: resolved.targetNits
+                    )
+                )
 
                 metalRenderer?.render(pixelBuffer: popped.pixelBuffer)
                 performanceMonitor.recordRenderedFrame(
@@ -662,6 +706,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 }
             } else {
                 presentToDisplayLayer(pixelBuffer: popped.pixelBuffer)
+                performanceMonitor.updateToneMapParams(
+                    PlayerPerformanceMonitor.ToneMapParams(mode: .appleXDR)
+                )
                 performanceMonitor.recordRenderedFrame(
                     durationMs: durationMs,
                     queueCount: qCount,
@@ -999,6 +1046,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
             $0.smoothedTargetNits = 203.0
             $0.lastRenderModeName = "Metal SDR"
         }
+        performanceMonitor.updateToneMapParams(
+            PlayerPerformanceMonitor.ToneMapParams(mode: .none, peakNits: 0, targetNits: 203)
+        )
         mediaTitle = ""
         artworkData = nil
         artworkURL = nil
@@ -1317,6 +1367,19 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 if demuxer.transferFunction == kCVImageBufferTransferFunction_ITU_R_2100_HLG { return "HLG" }
                 return "PQ (ST 2084)"
             }()
+
+            let dvProfileStr: String? = {
+                if demuxer.isDolbyVisionProfile5 { return "Profile 5 (ICtCp)" }
+                if let dvStr = demuxer.dolbyVisionProfileString {
+                    if demuxer.dolbyVisionProfile == 8 {
+                        if demuxer.dolbyVisionCompatibilityId == 1 { return "Profile 8.1 (HDR10 Base)" }
+                        if demuxer.dolbyVisionCompatibilityId == 4 { return "Profile 8.4 (HLG Base)" }
+                    }
+                    return "Profile \(dvStr)"
+                }
+                return nil
+            }()
+
             self.performanceMonitor.updateStreamMetadata(
                 resolution: "\(demuxer.width)x\(demuxer.height)",
                 codecName: demuxer.codec == .hevc ? "HEVC" : "H.264",
@@ -1324,8 +1387,30 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 colorPrimaries: primariesStr,
                 transferFunction: transferStr,
                 sourcePeakNits: demuxer.maxPeakNits,
-                targetNits: effectiveTargetNits
+                targetNits: effectiveTargetNits,
+                dolbyVisionProfile: dvProfileStr
             )
+
+            let initialToneMode: PlayerPerformanceMonitor.ToneMapEngineMode
+            if self.activeRenderMode == .system {
+                initialToneMode = .appleXDR
+            } else if demuxer.isDolbyVisionProfile5 || demuxer.dolbyVisionProfile != nil {
+                initialToneMode = .doviL2Trim
+            } else if demuxer.isHDR {
+                initialToneMode = .bt2390
+            } else {
+                initialToneMode = .directSDR
+            }
+            self.performanceMonitor.updateToneMapParams(
+                PlayerPerformanceMonitor.ToneMapParams(
+                    mode: initialToneMode,
+                    peakNits: demuxer.maxPeakNits,
+                    targetNits: effectiveTargetNits
+                )
+            )
+            if self.showDebugHUD {
+                self.currentMetrics = self.performanceMonitor.currentMetrics
+            }
         }
 
         AppLog.info(
