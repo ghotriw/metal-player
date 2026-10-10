@@ -242,6 +242,11 @@ fi
 
 echo "==> Done! App bundle created at $APP_DIR"
 if [ "$1" == "--run" ]; then
+    shift
     echo "==> Launching MetalPlayer.app..."
-    open "$APP_DIR"
+    if [ $# -gt 0 ]; then
+        open "$APP_DIR" --args "$@"
+    else
+        open "$APP_DIR"
+    fi
 fi

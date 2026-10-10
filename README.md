@@ -11,7 +11,7 @@ A video player for macOS built on VideoToolbox, AVSampleBufferDisplayLayer, and 
 - [x] Video: HEVC 10-bit, H.264 8/10-bit, Dolby Vision Profile 5, HLG
 - [x] Audio: master clock sync, multiple PCM tracks, Spatial Audio, 5.1/7.1
 - [x] Diagnostics overlay: CPU/RAM, A/V drift, queue levels
-- [x] Desktop UX: keyboard shortcuts, double-click fullscreen, cursor auto-hide
+- [x] Desktop UX: keyboard shortcuts, OSD, double-click fullscreen, cursor auto-hide
 - [x] Now Playing & system media controls.
 - [x] HTTP/HTTPS streaming with custom auth headers
 - [x] Resume playback & start time position control (Watch Later)
@@ -112,6 +112,30 @@ await engine.loadAsync(
     startTime: 300.0
 )
 ```
+
+## Command-Line Options
+
+Arguments work with `swift run`, the bundle script, and `open --args`:
+
+```bash
+swift run MetalPlayer --no-osd ~/Movies/sample.mkv
+./scripts/bundle_app.sh --run --render-mode=system --audio-track=jpn ~/Movies/movie.mkv
+open build/MetalPlayer.app --args --start-time=120 ~/Movies/movie.mkv
+```
+
+| Option | Description |
+| --- | --- |
+| `[path or URL]` | Local file or `http(s)://` stream |
+| `--no-osd` | Hide the OSD |
+| `--render-mode=auto\|system\|metal` | Initial render mode |
+| `--no-tone-mapping` | Disable SDR tone mapping |
+| `--sharpness=0.0–1.0` | Sharpening strength (default 0.5) |
+| `--volume=0.0–1.0` | Initial volume |
+| `--start-time=<sec>` | Start at a given position, ignoring history |
+| `--no-resume` | Don't restore the saved position |
+| `--audio-track=<id\|name>` | Pick audio track |
+| `--subtitle-track=<id\|name\|off>` | Pick subtitle track |
+| `--header="Key: Value"` | Custom HTTP header |
 
 ## Requirements
 

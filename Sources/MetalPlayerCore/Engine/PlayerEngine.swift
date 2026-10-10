@@ -111,7 +111,10 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.subtitleTextColorHex = config.subtitleTextColorHex
         self.subtitleBgColorHex = config.subtitleBgColorHex
         self.subtitleBgOpacity = config.subtitleBgOpacity
+        self.enableOSD = config.enableOSD
     }
+
+    public var enableOSD: Bool = true
 
     // Audio properties
     public var volume: Float = 1.0 {
@@ -282,6 +285,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.subtitleTextColorHex = configuration.subtitleTextColorHex
         self.subtitleBgColorHex = configuration.subtitleBgColorHex
         self.subtitleBgOpacity = configuration.subtitleBgOpacity
+        self.enableOSD = configuration.enableOSD
 
         metalRenderer?.uniforms.targetNits = configuration.targetNits
         metalRenderer?.uniforms.outputSharpness = configuration.sharpness

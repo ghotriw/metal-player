@@ -38,6 +38,9 @@ public struct SettingsView: View {
     @AppStorage(PlayerConfiguration.keySubtitleBgOpacity)
     private var subtitleBgOpacity: Double = 0.65
 
+    @AppStorage(PlayerConfiguration.keyEnableOSD)
+    private var enableOSD: Bool = true
+
     @State private var showHistoryClearedAlert: Bool = false
     @State private var selectedTab: SettingsTab = .subtitles
 
@@ -146,6 +149,21 @@ public struct SettingsView: View {
                 }
             } header: {
                 Text("Playback Resume")
+            }
+
+            Section {
+                Toggle("Show On-Screen Display (OSD)", isOn: $enableOSD)
+                    .onChange(of: enableOSD) { _, _ in
+                        notifyChange()
+                    }
+
+                Text(
+                    "Displays visual feedback badges in the top-left corner for actions like seeking, volume changes, pause/play, and track selection."
+                )
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            } header: {
+                Text("On-Screen Display (OSD)")
             }
         }
         .formStyle(.grouped)
@@ -414,7 +432,8 @@ public struct SettingsView: View {
             subtitleFontWeight: subtitleFontWeight,
             subtitleTextColorHex: subtitleTextColorHex,
             subtitleBgColorHex: subtitleBgColorHex,
-            subtitleBgOpacity: subtitleBgOpacity
+            subtitleBgOpacity: subtitleBgOpacity,
+            enableOSD: enableOSD
         )
         onConfigurationChanged?(current)
     }

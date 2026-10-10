@@ -135,6 +135,21 @@ public struct ContentView: View {
             .ignoresSafeArea()
             .allowsHitTesting(false)
 
+            // On-Screen Display (OSD) Overlay - Top Left
+            if engine.enableOSD, uiState.osd.isVisible, let event = uiState.osd.currentEvent {
+                VStack {
+                    HStack {
+                        OSDOverlayView(event: event)
+                            .transition(.opacity.animation(.easeInOut(duration: 0.16)))
+                            .padding(.top, 28)
+                            .padding(.leading, 24)
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .allowsHitTesting(false)
+            }
+
             // Performance Telemetry HUD
             if engine.showDebugHUD {
                 VStack {
@@ -153,6 +168,7 @@ public struct ContentView: View {
             if isControlsVisible || !engine.isLoaded || isUserInteracting {
                 ControlsOverlay(
                     engine: engine,
+                    uiState: uiState,
                     isInteracting: $isUserInteracting,
                     isFullscreen: uiState.isFullscreen
                 ) {

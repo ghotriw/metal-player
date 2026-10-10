@@ -48,6 +48,7 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
 
     @MainActor var volume: Float { get set }
     @MainActor var isMuted: Bool { get set }
+    @MainActor var enableOSD: Bool { get set }
     @MainActor var showDebugHUD: Bool { get set }
     @MainActor var audioTracks: [MediaDemuxer.AudioTrack] { get }
     @MainActor var selectedAudioTrackId: Int { get }

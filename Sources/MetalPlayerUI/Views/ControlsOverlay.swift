@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 public struct ControlsOverlay: View {
     @Bindable var engine: PlayerEngine
+    var uiState: PlayerUIState? = nil
     @Binding var isInteracting: Bool
     var isFullscreen: Bool = false
     var onOpenFile: () -> Void
@@ -237,8 +238,11 @@ public struct ControlsOverlay: View {
                 keyEquivalent: ""
             )
             item.state = (track.id == engine.selectedAudioTrackId) ? .on : .off
-            let target = AudioTrackMenuHelper { [weak engine] in
+            let target = AudioTrackMenuHelper { [weak engine, weak uiState] in
                 engine?.selectAudioTrack(id: track.id)
+                if engine?.enableOSD == true {
+                    uiState?.osd.show(.audioTrack(title: label))
+                }
             }
             item.target = target
             item.representedObject = target
@@ -259,8 +263,11 @@ public struct ControlsOverlay: View {
             keyEquivalent: ""
         )
         offItem.state = (engine.selectedSubtitleTrackId == nil) ? .on : .off
-        let offTarget = AudioTrackMenuHelper { [weak engine] in
+        let offTarget = AudioTrackMenuHelper { [weak engine, weak uiState] in
             engine?.selectSubtitleTrack(id: nil)
+            if engine?.enableOSD == true {
+                uiState?.osd.show(.subtitleTrack(title: "Subtitles Off"))
+            }
         }
         offItem.target = offTarget
         offItem.representedObject = offTarget
@@ -275,8 +282,11 @@ public struct ControlsOverlay: View {
                     keyEquivalent: ""
                 )
                 item.state = (track.id == engine.selectedSubtitleTrackId) ? .on : .off
-                let target = AudioTrackMenuHelper { [weak engine] in
+                let target = AudioTrackMenuHelper { [weak engine, weak uiState] in
                     engine?.selectSubtitleTrack(id: track.id)
+                    if engine?.enableOSD == true {
+                        uiState?.osd.show(.subtitleTrack(title: track.title))
+                    }
                 }
                 item.target = target
                 item.representedObject = target
@@ -290,7 +300,7 @@ public struct ControlsOverlay: View {
             action: #selector(AudioTrackMenuHelper.selectTrack(_:)),
             keyEquivalent: ""
         )
-        let loadTarget = AudioTrackMenuHelper { [weak engine] in
+        let loadTarget = AudioTrackMenuHelper { [weak engine, weak uiState] in
             let panel = NSOpenPanel()
             panel.title = "Select Subtitle File"
             panel.allowedContentTypes = [
@@ -302,6 +312,9 @@ public struct ControlsOverlay: View {
             panel.canChooseFiles = true
             if panel.runModal() == .OK, let url = panel.url {
                 engine?.loadExternalSubtitle(url: url)
+                if engine?.enableOSD == true {
+                    uiState?.osd.show(.subtitleTrack(title: url.lastPathComponent))
+                }
             }
         }
         loadExternalItem.target = loadTarget

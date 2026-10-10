@@ -49,6 +49,9 @@ public struct PlayerConfiguration: Sendable, Equatable {
     /// Subtitle font weight (e.g. "Regular", "Medium", "Semibold", "Bold", "Heavy", default "Semibold").
     public var subtitleFontWeight: String
 
+    /// Whether On-Screen Display (OSD) notifications are enabled (default true).
+    public var enableOSD: Bool
+
     /// Explicit start time in seconds requested on launch (if provided, overrides resume history).
     public var startTime: Double?
 
@@ -78,6 +81,7 @@ public struct PlayerConfiguration: Sendable, Equatable {
         subtitleTextColorHex: String = "#FFFFFF",
         subtitleBgColorHex: String = "#000000",
         subtitleBgOpacity: Double = 0.65,
+        enableOSD: Bool = true,
         startTime: Double? = nil,
         audioTrack: String? = nil,
         subtitleTrack: String? = nil
@@ -97,6 +101,7 @@ public struct PlayerConfiguration: Sendable, Equatable {
         self.subtitleTextColorHex = subtitleTextColorHex
         self.subtitleBgColorHex = subtitleBgColorHex
         self.subtitleBgOpacity = subtitleBgOpacity
+        self.enableOSD = enableOSD
         self.startTime = startTime
         self.audioTrack = audioTrack
         self.subtitleTrack = subtitleTrack
@@ -114,6 +119,7 @@ public struct PlayerConfiguration: Sendable, Equatable {
     public static let keySubtitleTextColorHex = "MetalPlayer.subtitleTextColorHex"
     public static let keySubtitleBgColorHex = "MetalPlayer.subtitleBgColorHex"
     public static let keySubtitleBgOpacity = "MetalPlayer.subtitleBgOpacity"
+    public static let keyEnableOSD = "MetalPlayer.enableOSD"
 
     /// Loads configuration from UserDefaults, falling back to defaults if not set.
     public static func loadFromUserDefaults(userDefaults: UserDefaults = .standard) -> PlayerConfiguration {
@@ -154,6 +160,9 @@ public struct PlayerConfiguration: Sendable, Equatable {
         if let bgOpacity = userDefaults.object(forKey: keySubtitleBgOpacity) as? NSNumber {
             config.subtitleBgOpacity = bgOpacity.doubleValue
         }
+        if userDefaults.object(forKey: keyEnableOSD) != nil {
+            config.enableOSD = userDefaults.bool(forKey: keyEnableOSD)
+        }
         return config
     }
 
@@ -171,6 +180,7 @@ public struct PlayerConfiguration: Sendable, Equatable {
         userDefaults.set(subtitleTextColorHex, forKey: Self.keySubtitleTextColorHex)
         userDefaults.set(subtitleBgColorHex, forKey: Self.keySubtitleBgColorHex)
         userDefaults.set(subtitleBgOpacity, forKey: Self.keySubtitleBgOpacity)
+        userDefaults.set(enableOSD, forKey: Self.keyEnableOSD)
     }
 
     private static func nonEmpty(_ value: String) -> String? {
@@ -240,6 +250,10 @@ public struct PlayerConfiguration: Sendable, Equatable {
                 config.resumePlayback = false
             } else if arg == "--resume" || arg == "--enable-resume" {
                 config.resumePlayback = true
+            } else if arg == "--no-osd" || arg == "--disable-osd" {
+                config.enableOSD = false
+            } else if arg == "--enable-osd" || arg == "--osd" {
+                config.enableOSD = true
             } else if arg.starts(with: "--subtitle-font=") {
                 config.subtitleFontName = String(arg.dropFirst("--subtitle-font=".count))
             } else if arg.starts(with: "--subtitle-weight=") {

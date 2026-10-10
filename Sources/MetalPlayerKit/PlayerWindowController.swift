@@ -310,7 +310,10 @@ extension PlayerWindowController: PlayerActions {
         get { engine.renderMode }
         set {
             engine.renderMode = newValue
-            uiState.showControlsTemporarily()
+            // uiState.showControlsTemporarily()
+            if engine.enableOSD {
+                uiState.osd.show(.renderMode(modeName: newValue.rawValue))
+            }
         }
     }
 
@@ -318,7 +321,9 @@ extension PlayerWindowController: PlayerActions {
         get { engine.metalSharpness }
         set {
             engine.metalSharpness = newValue
-            uiState.showControlsTemporarily()
+            if engine.enableOSD {
+                uiState.osd.show(.sharpness(value: newValue))
+            }
         }
     }
 
@@ -332,32 +337,45 @@ extension PlayerWindowController: PlayerActions {
 
     public func togglePlayPause() {
         engine.togglePlayPause()
-        uiState.showControlsTemporarily()
+        // uiState.showControlsTemporarily()
+        if engine.enableOSD {
+            uiState.osd.show(engine.isPlaying ? .play : .pause)
+        }
     }
 
     public func stepFrameForward() {
         engine.stepFrameForward()
-        uiState.showControlsTemporarily()
+        if engine.enableOSD {
+            uiState.osd.show(.frameStep(forward: true))
+        }
     }
 
     public func stepFrameBackward() {
         engine.stepFrameBackward()
-        uiState.showControlsTemporarily()
+        if engine.enableOSD {
+            uiState.osd.show(.frameStep(forward: false))
+        }
     }
 
     public func seekRelative(by seconds: Double) {
         engine.seekRelative(by: seconds)
-        uiState.showControlsTemporarily()
+        if engine.enableOSD {
+            uiState.osd.show(.seek(offsetSeconds: seconds, currentTime: engine.currentTime, duration: engine.duration))
+        }
     }
 
     public func stepVolume(by delta: Float) {
         engine.stepVolume(by: delta)
-        uiState.showControlsTemporarily()
+        if engine.enableOSD {
+            uiState.osd.show(.volume(level: engine.volume, isMuted: engine.isMuted))
+        }
     }
 
     public func toggleMute() {
         engine.toggleMute()
-        uiState.showControlsTemporarily()
+        if engine.enableOSD {
+            uiState.osd.show(.volume(level: engine.volume, isMuted: engine.isMuted))
+        }
     }
 
     public func toggleDebugHUD() {

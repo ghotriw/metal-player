@@ -14,6 +14,7 @@ struct PlayerConfigurationTests {
         #expect(config.targetNits == 203.0)
         #expect(config.sharpness == 0.5)
         #expect(config.initialVolume == 1.0)
+        #expect(config.enableOSD == true)
     }
 
     @Test("CLI arguments correctly parse tone mapping disable flag")
@@ -138,5 +139,31 @@ struct PlayerConfigurationTests {
         let config = PlayerConfiguration.parse(arguments: args).configuration
         #expect(config.audioTrack == "jpn")
         #expect(config.subtitleTrack == "off")
+    }
+
+    @Test("UserDefaults roundtrip preserves enableOSD flag")
+    func testUserDefaultsOSD() {
+        let defaults = UserDefaults(suiteName: "test.osd.flag")!
+        defaults.removePersistentDomain(forName: "test.osd.flag")
+        var config = PlayerConfiguration()
+        config.enableOSD = false
+        config.saveToUserDefaults(userDefaults: defaults)
+
+        let loaded = PlayerConfiguration.loadFromUserDefaults(userDefaults: defaults)
+        #expect(loaded.enableOSD == false)
+    }
+
+    @Test("CLI arguments correctly parse OSD disable and enable flags")
+    func testParseOSDFlags() {
+        let argsDisable = ["MetalPlayer", "--no-osd", "movie.mkv"]
+        let (configDisabled, _) = PlayerConfiguration.parse(arguments: argsDisable)
+        #expect(configDisabled.enableOSD == false)
+
+        let argsEnable = ["MetalPlayer", "--enable-osd", "movie.mkv"]
+        let (configEnabled, _) = PlayerConfiguration.parse(
+            arguments: argsEnable,
+            base: PlayerConfiguration(enableOSD: false)
+        )
+        #expect(configEnabled.enableOSD == true)
     }
 }
