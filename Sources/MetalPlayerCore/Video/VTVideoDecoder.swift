@@ -102,11 +102,10 @@ public final class VTVideoDecoder: @unchecked Sendable {
         }
 
         var dovi: DolbyVisionFrameMetadata? = nil
-        if let box = CMGetAttachment(
-            sampleBuffer, key: MediaDemuxer.dolbyVisionMetadataAttachmentKey as CFString, attachmentModeOut: nil)
-            as? DolbyVisionMetadataBox
-        {
+        let doviKey = MediaDemuxer.dolbyVisionMetadataAttachmentKey as CFString
+        if let box = CMGetAttachment(sampleBuffer, key: doviKey, attachmentModeOut: nil) as? DolbyVisionMetadataBox {
             dovi = box.metadata
+            CMRemoveAttachment(sampleBuffer, key: doviKey)
         }
 
         let frameId = nextFrameId

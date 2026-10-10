@@ -1280,7 +1280,7 @@ public final class MediaDemuxer: @unchecked Sendable {
                 CMSetAttachment(
                     sb, key: Self.dolbyVisionMetadataAttachmentKey as CFString,
                     value: DolbyVisionMetadataBox(metadata: doviMetadata),
-                    attachmentMode: kCMAttachmentMode_ShouldPropagate
+                    attachmentMode: kCMAttachmentMode_ShouldNotPropagate
                 )
             }
 
