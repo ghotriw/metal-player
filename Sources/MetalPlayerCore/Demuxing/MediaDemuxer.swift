@@ -1136,6 +1136,7 @@ public final class MediaDemuxer: @unchecked Sendable {
     }
 
     private var targetPts: Int64 = -1
+    private var targetAudioPts: Int64 = -1
 
     private func createVideoSample(from rawData: Data, pts: Int64, dts: Int64, duration: Int64) -> CMSampleBuffer? {
         guard let formatDesc = formatDescription else { return nil }
@@ -1291,8 +1292,15 @@ public final class MediaDemuxer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
 
-        if !audioQueue.isEmpty {
+        while !audioQueue.isEmpty {
             let p = audioQueue.removeFirst()
+            if targetAudioPts >= 0 {
+                let packetEndPts = p.pts + (p.duration > 0 ? p.duration : 0)
+                if packetEndPts < targetAudioPts {
+                    continue
+                }
+                targetAudioPts = -1
+            }
             self.lastAudioPts = p.pts
             return p
         }
@@ -1308,16 +1316,26 @@ public final class MediaDemuxer: @unchecked Sendable {
         var pkt = AVPacket()
         while av_read_frame(ctx, &pkt) >= 0 {
             if pkt.stream_index == audioStreamIndex {
+                let pktPts = pkt.pts
+                let pktDuration = pkt.duration
+                if targetAudioPts >= 0 {
+                    let packetEndPts = pktPts + (pktDuration > 0 ? pktDuration : 0)
+                    if packetEndPts < targetAudioPts {
+                        av_packet_unref(&pkt)
+                        continue
+                    }
+                    targetAudioPts = -1
+                }
                 let data = Data(bytes: pkt.data, count: Int(pkt.size))
                 let isKey = (pkt.flags & AV_PKT_FLAG_KEY) != 0
                 let audioPacket = DemuxedAudioPacket(
                     data: data,
-                    pts: pkt.pts,
+                    pts: pktPts,
                     dts: pkt.dts,
-                    duration: pkt.duration,
+                    duration: pktDuration,
                     isKeyFrame: isKey
                 )
-                self.lastAudioPts = pkt.pts
+                self.lastAudioPts = pktPts
                 av_packet_unref(&pkt)
                 return audioPacket
             } else if pkt.stream_index == videoStreamIndex {
@@ -1354,6 +1372,11 @@ public final class MediaDemuxer: @unchecked Sendable {
         videoQueue.removeAll()
         lastAudioPts = -1
         isEOFInternal = false
+        if audioTimebase.den > 0 && audioTimebase.num > 0 {
+            self.targetAudioPts = Int64(seconds * Double(audioTimebase.den) / Double(audioTimebase.num))
+        } else {
+            self.targetAudioPts = -1
+        }
         guard timebase.num > 0 else { return }
         let target = Int64(seconds * Double(timebase.den) / Double(timebase.num))
         self.targetPts = target
@@ -1361,8 +1384,21 @@ public final class MediaDemuxer: @unchecked Sendable {
         let ret = av_seek_frame(ctx, Int32(streamIdx), target, AVSEEK_FLAG_BACKWARD)
         AppLog.debug(
             .demuxer,
-            "av_seek_frame to targetPts: \(target) (seconds: \(seconds)), stream: \(streamIdx), ret: \(ret)"
+            "av_seek_frame to targetPts: \(target), targetAudioPts: \(self.targetAudioPts) (seconds: \(seconds)), stream: \(streamIdx), ret: \(ret)"
         )
+    }
+
+    /// Discards any audio packets queued prior to the specified target time in seconds.
+    /// This prevents stale audio packets accumulated during video preroll/seeking from corrupting the synchronizer.
+    public func purgeAudio(beforeSeconds seconds: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard audioTimebase.den > 0 && audioTimebase.num > 0 else {
+            audioQueue.removeAll()
+            return
+        }
+        let thresholdPts = Int64(seconds * Double(audioTimebase.den) / Double(audioTimebase.num))
+        audioQueue.removeAll { $0.pts < thresholdPts }
     }
 
     public func cancel() {

@@ -14,8 +14,13 @@
 # Modern Apple Development Standards (macOS 15+ / Swift 6)
 
 ## 1. Requirement to Verify APIs via Apple Docs
-- The `apple-docs` MCP server is available (`search_apple_docs`, `get_apple_doc_content`, `search_framework_symbols`, `get_platform_compatibility`).
-- **MANDATORY**: When writing, updating, or reviewing code for AppKit, SwiftUI, AVFoundation, Metal, and CoreMedia, always check modern APIs and avoid obsolete/deprecated patterns.
+- The `apple-docs` MCP server is available as a lazy-loaded MCP server (`ServerName: "apple-docs"`).
+  - Use `call_mcp_tool` with `ServerName: "apple-docs"` to call its tools:
+    - `search_framework_symbols`: Best for finding modern symbols and APIs in a framework (e.g. `framework: "AVFoundation"`, `query: "AVPlayer"`).
+    - `get_apple_doc_content`: Retrieve full documentation for a specific symbol URL or path.
+    - `search_apple_docs`: Full-text search across Apple developer guides and articles.
+    - `get_platform_compatibility`: Verify minimum macOS deployment targets and deprecation status.
+- **MANDATORY**: When writing, updating, or reviewing code for AppKit, SwiftUI, AVFoundation, Metal, and CoreMedia, always check modern APIs via `apple-docs` and avoid obsolete/deprecated patterns.
 - Do NOT guess or rely on pre-2023 training memory for Apple APIs.
 
 ## 2. Deprecated & Prohibited Patterns

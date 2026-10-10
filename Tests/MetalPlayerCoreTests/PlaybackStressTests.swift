@@ -62,7 +62,127 @@ struct PlaybackStressTests {
         engine.stop()
     }
 
-    // MARK: - 2. Continuous Decoding & Frame Variation Test (Freeze Detector)
+    // MARK: - 1b. Rapid Relative Seeks During Active Playback
+    @Test("Rapid sequential relative seeks during active playback maintain playing state without pausing")
+    @MainActor
+    func testRapidRelativeSeeksDuringActivePlayback() async {
+        guard let path = Self.findTestMedia() else { return }
+
+        let engine = PlayerEngine()
+        engine.load(path: path)
+        #expect(engine.isLoaded == true)
+        #expect(engine.duration > 20.0)
+
+        engine.play()
+        #expect(engine.isPlaying == true)
+        #expect(engine.playbackState == .playing)
+
+        // Simulate user repeatedly hitting forward (+5s) in rapid succession
+        let initialTime = engine.currentTime
+        engine.seekRelative(by: 5.0)
+        try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
+        engine.seekRelative(by: 5.0)
+        try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
+        engine.seekRelative(by: 5.0)
+
+        // Wait for the asynchronous seek pipeline to finish and settle
+        try? await Task.sleep(nanoseconds: 2_000_000_000)  // 2.0s
+
+        #expect(engine.isPlaying == true, "Engine must resume playing after rapid forward seeks")
+        #expect(engine.playbackState == .playing, "Playback state must remain .playing")
+        #expect(engine.currentTime >= initialTime + 12.0, "Current time must have advanced by cumulative seek steps")
+
+        engine.stop()
+    }
+
+    // MARK: - 1c. Rapid Backward Relative Seeks During Active Playback
+    @Test("Rapid sequential backward relative seeks maintain playing state and settle smoothly")
+    @MainActor
+    func testRapidBackwardRelativeSeeksDuringActivePlayback() async {
+        guard let path = Self.findTestMedia() else { return }
+
+        let engine = PlayerEngine()
+        engine.load(path: path)
+        #expect(engine.isLoaded == true)
+        #expect(engine.duration > 20.0)
+
+        // Seek forward to 18 seconds first so we have room to seek backward
+        engine.seek(to: 18.0)
+        try? await Task.sleep(nanoseconds: 500_000_000)
+
+        engine.play()
+        #expect(engine.isPlaying == true)
+        #expect(engine.playbackState == .playing)
+
+        let initialTime = engine.currentTime
+        // Rapid sequential backward seeks: -4s, -4s, -4s = -12s total
+        engine.seekRelative(by: -4.0)
+        try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
+        engine.seekRelative(by: -4.0)
+        try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
+        engine.seekRelative(by: -4.0)
+
+        // Wait for asynchronous chase seek pipeline to settle
+        try? await Task.sleep(nanoseconds: 2_000_000_000)  // 2.0s
+
+        #expect(engine.isPlaying == true, "Engine must resume playing after rapid backward seeks")
+        #expect(engine.playbackState == .playing, "Playback state must remain .playing")
+        #expect(
+            engine.currentTime <= initialTime - 8.0, "Current time must have moved backward by cumulative seek steps")
+
+        engine.stop()
+    }
+
+    // MARK: - 1d. Rapid Chase Seek Burst While In-Flight Does Not Deadlock
+    @Test("Rapid chase seek burst while demuxer seek is in flight settles cleanly and resumes playback")
+    @MainActor
+    func testRapidChaseSeekBurstWhileInFlightDoesNotDeadlock() async {
+        guard let path = Self.findTestMedia() else { return }
+
+        let engine = PlayerEngine()
+        engine.load(path: path)
+        #expect(engine.isLoaded == true)
+        #expect(engine.duration > 20.0)
+
+        engine.play()
+        #expect(engine.isPlaying == true)
+        #expect(engine.playbackState == .playing)
+
+        // Wait for playback and feeders to start
+        try? await Task.sleep(nanoseconds: 200_000_000)
+
+        // Trigger first seek
+        engine.seekRelative(by: 5.0)
+
+        // Wait past the 75ms debounce window so demuxer seek starts on background seekQueue and isSeeking becomes true
+        try? await Task.sleep(nanoseconds: 90_000_000)  // 90ms
+
+        // Trigger second seek while first demuxer seek is actively in-flight
+        engine.seekRelative(by: 5.0)
+
+        // Wait for chase seek sequence to fully settle
+        try? await Task.sleep(nanoseconds: 2_000_000_000)  // 2.0s
+
+        #expect(engine.isPlaying == true, "Engine must resume playback after in-flight chase seek")
+        #expect(engine.playbackState == .playing, "Playback state must be .playing")
+
+        // Record time and verify that the clock and playback are actively advancing (no freeze)
+        let timeAfterSeek = engine.currentTime
+        try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+        #expect(engine.currentTime > timeAfterSeek, "Playback clock must continue advancing after chase seek settles")
+
+        // Verify pause and play responsiveness
+        engine.pause()
+        #expect(engine.isPlaying == false)
+        #expect(engine.playbackState == .paused)
+
+        engine.play()
+        #expect(engine.isPlaying == true)
+        #expect(engine.playbackState == .playing)
+
+        engine.stop()
+    }
+
     @Test("Continuous video decoding delivers unique changing frames without video freeze")
     func testContinuousVideoDecodingFrameVariation() {
         guard let path = Self.findTestMedia() else { return }

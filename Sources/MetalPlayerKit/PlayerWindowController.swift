@@ -348,12 +348,6 @@ extension PlayerWindowController: PlayerActions {
     public func seekRelative(by seconds: Double) {
         engine.seekRelative(by: seconds)
         uiState.showControlsTemporarily()
-        nowPlayingController.update(
-            title: engine.mediaTitle,
-            currentTime: engine.currentTime,
-            duration: engine.duration,
-            isPlaying: engine.isPlaying
-        )
     }
 
     public func stepVolume(by delta: Float) {
