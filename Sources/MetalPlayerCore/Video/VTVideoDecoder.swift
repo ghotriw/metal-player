@@ -11,6 +11,14 @@ public final class VTVideoDecoder: @unchecked Sendable {
     private var _lastDecodeStatus: OSStatus = noErr
     private var _lastCallbackStatus: OSStatus = noErr
 
+    private struct FrameContext: Sendable {
+        let doNotDisplay: Bool
+        let doviMetadata: DolbyVisionFrameMetadata?
+    }
+
+    private var nextFrameId: UInt64 = 1
+    private var inFlightFrames: [UInt64: FrameContext] = [:]
+
     public var lastDecodeStatus: OSStatus {
         lock.lock()
         defer { lock.unlock() }
@@ -40,12 +48,20 @@ public final class VTVideoDecoder: @unchecked Sendable {
         public let pts: CMTime
         public let duration: CMTime
         public let doNotDisplay: Bool
+        public let doviMetadata: DolbyVisionFrameMetadata?
 
-        public init(pixelBuffer: CVPixelBuffer, pts: CMTime, duration: CMTime, doNotDisplay: Bool = false) {
+        public init(
+            pixelBuffer: CVPixelBuffer,
+            pts: CMTime,
+            duration: CMTime,
+            doNotDisplay: Bool = false,
+            doviMetadata: DolbyVisionFrameMetadata? = nil
+        ) {
             self.pixelBuffer = pixelBuffer
             self.pts = pts
             self.duration = duration
             self.doNotDisplay = doNotDisplay
+            self.doviMetadata = doviMetadata
         }
     }
 
@@ -56,8 +72,8 @@ public final class VTVideoDecoder: @unchecked Sendable {
 
     public func setOutputHandler(_ handler: @escaping OutputHandler) {
         lock.lock()
-        defer { lock.unlock() }
-        self.outputHandler = handler
+        outputHandler = handler
+        lock.unlock()
     }
 
     public func decode(sampleBuffer: CMSampleBuffer) {
@@ -73,7 +89,6 @@ public final class VTVideoDecoder: @unchecked Sendable {
             lock.unlock()
             return
         }
-        lock.unlock()
 
         // Check if sample has kCMSampleAttachmentKey_DoNotDisplay
         var doNotDisplay = false
@@ -86,7 +101,23 @@ public final class VTVideoDecoder: @unchecked Sendable {
             }
         }
 
-        let refCon = UnsafeMutableRawPointer(bitPattern: doNotDisplay ? 1 : 0)
+        var dovi: DolbyVisionFrameMetadata? = nil
+        if let box = CMGetAttachment(
+            sampleBuffer, key: MediaDemuxer.dolbyVisionMetadataAttachmentKey as CFString, attachmentModeOut: nil)
+            as? DolbyVisionMetadataBox
+        {
+            dovi = box.metadata
+        }
+
+        let frameId = nextFrameId
+        nextFrameId &+= 1
+        if nextFrameId == 0 {
+            nextFrameId = 1
+        }
+        inFlightFrames[frameId] = FrameContext(doNotDisplay: doNotDisplay, doviMetadata: dovi)
+        lock.unlock()
+
+        let refCon = UnsafeMutableRawPointer(bitPattern: UInt(frameId))
 
         var infoFlags = VTDecodeInfoFlags()
         let status = VTDecompressionSessionDecodeFrame(
@@ -96,8 +127,12 @@ public final class VTVideoDecoder: @unchecked Sendable {
             frameRefcon: refCon,
             infoFlagsOut: &infoFlags
         )
+
         lock.lock()
         self._lastDecodeStatus = status
+        if status != noErr {
+            inFlightFrames.removeValue(forKey: frameId)
+        }
         lock.unlock()
     }
 
@@ -106,6 +141,7 @@ public final class VTVideoDecoder: @unchecked Sendable {
             VTDecompressionSessionInvalidate(session)
             self.session = nil
         }
+        inFlightFrames.removeAll(keepingCapacity: true)
 
         self.currentFormatDescription = formatDescription
 
@@ -115,7 +151,6 @@ public final class VTVideoDecoder: @unchecked Sendable {
         let isFullRange = (extensions?[kCMFormatDescriptionExtension_FullRangeVideo as String] as? Bool) ?? false
 
         // Check if format is 10-bit:
-        // CoreMedia format descriptions for 10-bit H.264/HEVC specify depth or contain 10-bit transfer/primaries/sub-types
         let mediaSubType = CMFormatDescriptionGetMediaSubType(formatDescription)
         let depth = (extensions?[kCMFormatDescriptionExtension_Depth as String] as? NSNumber)?.intValue ?? 24
         let transfer = extensions?[kCVImageBufferTransferFunctionKey as String] as? String
@@ -151,18 +186,26 @@ public final class VTVideoDecoder: @unchecked Sendable {
                 ) in
                 guard let refCon = decompressionOutputRefCon else { return }
                 let decoder = Unmanaged<VTVideoDecoder>.fromOpaque(refCon).takeUnretainedValue()
+
+                var frameCtx: FrameContext? = nil
                 decoder.lock.lock()
                 decoder._lastCallbackStatus = status
+                if let sourceFrameRefCon {
+                    let frameId = UInt64(UInt(bitPattern: sourceFrameRefCon))
+                    frameCtx = decoder.inFlightFrames.removeValue(forKey: frameId)
+                }
+                let handler = decoder.outputHandler
                 decoder.lock.unlock()
+
                 guard status == noErr, let imageBuffer else { return }
-                let doNotDisplay = (Int(bitPattern: sourceFrameRefCon) == 1)
                 let frame = DecodedFrame(
                     pixelBuffer: imageBuffer,
                     pts: presentationTimeStamp,
                     duration: presentationDuration,
-                    doNotDisplay: doNotDisplay
+                    doNotDisplay: frameCtx?.doNotDisplay ?? false,
+                    doviMetadata: frameCtx?.doviMetadata
                 )
-                decoder.outputHandler?(frame)
+                handler?(frame)
             },
             decompressionOutputRefCon: Unmanaged.passUnretained(self).toOpaque()
         )
@@ -196,6 +239,9 @@ public final class VTVideoDecoder: @unchecked Sendable {
         if let s {
             VTDecompressionSessionWaitForAsynchronousFrames(s)
         }
+        lock.lock()
+        inFlightFrames.removeAll(keepingCapacity: true)
+        lock.unlock()
     }
 
     /// Explicitly resets and invalidates the decompression session.
@@ -205,6 +251,7 @@ public final class VTVideoDecoder: @unchecked Sendable {
         let oldSession = self.session
         self.session = nil
         self.currentFormatDescription = nil
+        self.inFlightFrames.removeAll(keepingCapacity: true)
         lock.unlock()
 
         if let oldSession {
@@ -218,6 +265,7 @@ public final class VTVideoDecoder: @unchecked Sendable {
         outputHandler = nil
         let s = session
         self.session = nil
+        self.inFlightFrames.removeAll()
         lock.unlock()
         if let s {
             VTDecompressionSessionWaitForAsynchronousFrames(s)

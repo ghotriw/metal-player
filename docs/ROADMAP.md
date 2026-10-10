@@ -21,9 +21,9 @@ The goal is to evolve the dual-engine video rendering core into a complete stand
 
 ```mermaid
 flowchart TD
-    M1["Stage 1: H.264 / HEVC / DV P5 / HLG ✅"] --> M15["Stage 1.5: Dolby Vision Profile 8.1 / 8.4 RPU Engine"]
+    M1["Stage 1: H.264 / HEVC / DV P5 / HLG ✅"] --> M15["Stage 1.5: Dolby Vision Profile 8.1 / 8.4 RPU Engine ✅"]
     M15 --> M2["Stage 2: Audio Pipeline ✅"]
-    M2 --> M3["Stage 3: Network & Remote Streaming"]
+    M2 --> M3["Stage 3: Network & Remote Streaming ✅"]
     M3 --> M4["Stage 4: Subtitles Subsystem SRT/VTT ✅"]
     M4 --> M5["Stage 5: WKWebView Bridge"]
     M5 --> M6["Stage 6: Desktop UI & UX Controls ✅"]
@@ -55,18 +55,22 @@ flowchart TD
 
 ---
 
-### Stage 1.5: Dynamic HDR & Dolby Vision Profile 8 (8.1 / 8.4) Engine
+### Stage 1.5: Dynamic HDR & Dolby Vision Profile 8 (8.1 / 8.4) Engine — [COMPLETED] ✅
 > Dynamic metadata adaptation (SMPTE ST 2094-10) for Web-DL, UHD Blu-ray rips, and iPhone HDR video.
 
 - [x] **1.5.1. Profile Detection & Hardware Decoding:**
   - Parse `dvvC` / `dvcC` configuration boxes from extradata and stream side data (`AV_PKT_DATA_DOVI_CONF`).
   - Distinguish Profile 5 (ICtCp), Profile 8.1 (HDR10 PQ), Profile 8.2 (SDR BT.709), Profile 8.4 (BT.2100 HLG), and Profile 7.
   - Construct Apple-compliant `CMVideoFormatDescription` with `kCMVideoCodecType_DolbyVisionHEVC` (`dvh1`), enabling VideoToolbox hardware decoding of the base layer with `DolbyVisionRPUData` sample buffer attachments.
-- [ ] **1.5.2. DOVI RPU Bitstream Parsing (Level 1 Metadata):**
-  - Parse Dolby Vision Level 1 (L1) dynamic metadata from RPU payload: frame-accurate `min_pq`, `max_pq`, and `avg_pq`.
-- [ ] **1.5.3. Adaptive Scene-by-Scene Tone Mapping:**
-  - Forward dynamic L1 target parameters with frame PTS through `FrameQueue`.
-  - Feed dynamic shot peak luminance directly into `HDRToneMapping.metal`, adjusting EETF kneepoints on the fly (retaining shadow details in dark scenes without blowing out highlights).
+- [x] **1.5.2. DOVI RPU Bitstream Parsing (Level 1 & Level 2 Metadata):**
+  - Parse Dolby Vision Level 1 (L1) dynamic metadata from RPU payload (NAL unit 62): frame-accurate `min_pq`, `max_pq`, and `avg_pq` with ST 2084 nits conversion.
+  - Parse Dolby Vision Level 2 (L2) display trim passes for 100-nit SDR target (`target_max_pq ≈ 2081`), extracting normalized slope, offset, power, and saturation gain parameters per SMPTE ST 2094-10 / ETSI TS 103 572.
+  - Safe bitstream parser with emulation prevention unescaping (`0x000003`), EOF guards, Profile 7 EL residual checking, and zero-allocation stream scanning for 4K60.
+- [x] **1.5.3. Adaptive Scene-by-Scene Tone Mapping:**
+  - Forward dynamic L1/L2 metadata with frame PTS through `VTVideoDecoder` into `FrameQueue` and `displayLinkTick`.
+  - When authored 100-nit L2 trim is present, apply SMPTE ST 2094-10 SOP (Slope, Offset, Power) parametric display mapping directly in the PQ domain before optical linear conversion, avoiding double-tonemapping distortion.
+  - Fallback to dynamic shot peak luminance and adaptive white point scaling via L1 with EMA temporal smoothing and scene refresh resets.
+  - Real-time Performance HUD reporting (`Metal SDR (DoVi L2 Trim)` / `Metal SDR (DoVi L1)`).
 
 ---
 

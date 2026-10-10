@@ -5,6 +5,8 @@ import VideoToolbox
 import os
 
 public final class MediaDemuxer: @unchecked Sendable {
+    public static let dolbyVisionMetadataAttachmentKey: String = "MetalPlayer.DolbyVisionMetadata"
+
     private var formatCtx: UnsafeMutablePointer<AVFormatContext>?
     private var videoStreamIndex: Int = -1
     private var audioStreamIndex: Int = -1
@@ -1184,6 +1186,13 @@ public final class MediaDemuxer: @unchecked Sendable {
     private func createVideoSample(from rawData: Data, pts: Int64, dts: Int64, duration: Int64) -> CMSampleBuffer? {
         guard let formatDesc = formatDescription else { return nil }
 
+        var doviMetadata: DolbyVisionFrameMetadata?
+        if codec == .hevc && dolbyVisionProfile != nil {
+            if let nalu = Self.findNALUnit62(in: rawData, isAnnexB: self.isAnnexBStream) {
+                doviMetadata = DolbyVisionRPUParser.parse(naluData: nalu)
+            }
+        }
+
         let (hvccData, hvccSize) = rawData.withUnsafeBytes { raw in
             Self.packetDataToHVCC(
                 pktData: raw.baseAddress!.assumingMemoryBound(to: UInt8.self),
@@ -1266,6 +1275,13 @@ public final class MediaDemuxer: @unchecked Sendable {
                 CMSetAttachment(
                     sb, key: kCVImageBufferContentLightLevelInfoKey, value: contentLightLevel as CFData,
                     attachmentMode: kCMAttachmentMode_ShouldPropagate)
+            }
+            if let doviMetadata {
+                CMSetAttachment(
+                    sb, key: Self.dolbyVisionMetadataAttachmentKey as CFString,
+                    value: DolbyVisionMetadataBox(metadata: doviMetadata),
+                    attachmentMode: kCMAttachmentMode_ShouldPropagate
+                )
             }
 
             if isBeforeTarget {
@@ -1532,6 +1548,72 @@ public final class MediaDemuxer: @unchecked Sendable {
                 offset += naluLen
             }
             return nalus
+        }
+    }
+
+    /// Fast scan for HEVC NAL unit type 62 (Dolby Vision RPU) without allocating all NAL units.
+    static func findNALUnit62(in data: Data, isAnnexB: Bool) -> Data? {
+        let count = data.count
+        guard count >= 5 else { return nil }
+        return data.withUnsafeBytes { ptr -> Data? in
+            guard let bytes = ptr.bindMemory(to: UInt8.self).baseAddress else { return nil }
+            if isAnnexB {
+                var i = 0
+                while i + 4 < count {
+                    let prefixLen: Int
+                    if bytes[i] == 0 && bytes[i + 1] == 0 {
+                        if bytes[i + 2] == 1 {
+                            prefixLen = 3
+                        } else if bytes[i + 2] == 0 && bytes[i + 3] == 1 {
+                            prefixLen = 4
+                        } else {
+                            i += 1
+                            continue
+                        }
+                    } else {
+                        i += 1
+                        continue
+                    }
+
+                    let nalStart = i + prefixLen
+                    guard nalStart < count else { break }
+                    let nalType = (bytes[nalStart] >> 1) & 0x3F
+
+                    if nalType == 62 {
+                        // Find the end of this NALU (next start code or EOF)
+                        var next = nalStart + 1
+                        while next + 2 < count {
+                            if bytes[next] == 0 && bytes[next + 1] == 0
+                                && (bytes[next + 2] == 1
+                                    || (next + 3 < count && bytes[next + 2] == 0 && bytes[next + 3] == 1))
+                            {
+                                break
+                            }
+                            next += 1
+                        }
+                        let nalEnd = (next + 2 < count) ? next : count
+                        return data.subdata(in: nalStart..<nalEnd)
+                    }
+
+                    i = nalStart
+                }
+                return nil
+            } else {
+                var offset = 0
+                while offset + 4 <= count {
+                    let naluLen =
+                        Int(bytes[offset]) << 24 | Int(bytes[offset + 1]) << 16 | Int(bytes[offset + 2]) << 8
+                        | Int(bytes[offset + 3])
+                    offset += 4
+                    guard naluLen > 0, offset + naluLen <= count else { break }
+                    let nalType = (bytes[offset] >> 1) & 0x3F
+                    if nalType == 62 {
+                        return data.subdata(in: offset..<(offset + naluLen))
+                    }
+                    offset += naluLen
+                }
+                return nil
+            }
         }
     }
 

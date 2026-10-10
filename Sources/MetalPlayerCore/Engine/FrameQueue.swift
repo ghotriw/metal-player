@@ -114,9 +114,21 @@ public final class FrameQueue: @unchecked Sendable {
         }
     }
 
+    public struct PoppedFrame: @unchecked Sendable {
+        public let pixelBuffer: CVPixelBuffer
+        public let pts: CMTime
+        public let doviMetadata: DolbyVisionFrameMetadata?
+
+        public init(pixelBuffer: CVPixelBuffer, pts: CMTime, doviMetadata: DolbyVisionFrameMetadata? = nil) {
+            self.pixelBuffer = pixelBuffer
+            self.pts = pts
+            self.doviMetadata = doviMetadata
+        }
+    }
+
     /// Pops the next frame whose PTS matches or precedes `syncTime + maxLeadTime`.
-    /// Immediately releases the internal `DecodedFrame` reference and returns its `CVPixelBuffer` along with its `pts`.
-    public func popFrame(forSyncTime syncTime: CMTime) -> (pixelBuffer: CVPixelBuffer, pts: CMTime)? {
+    /// Immediately releases the internal `DecodedFrame` reference and returns its `PoppedFrame`.
+    public func popFrame(forSyncTime syncTime: CMTime) -> PoppedFrame? {
         lock.lock()
         defer { lock.unlock() }
         guard countInternal > 0 else { return nil }
@@ -124,6 +136,7 @@ public final class FrameQueue: @unchecked Sendable {
         let maxLeadTime = CMTime(value: 50, timescale: 1000)
         var chosen: CVPixelBuffer?
         var chosenPts: CMTime = .invalid
+        var chosenDovi: DolbyVisionFrameMetadata? = nil
 
         while countInternal > 0 {
             guard let frame = buffer[head] else {
@@ -141,6 +154,7 @@ public final class FrameQueue: @unchecked Sendable {
                     }
                     chosen = frame.pixelBuffer
                     chosenPts = frame.pts
+                    chosenDovi = frame.doviMetadata
                 }
                 // Zero out reference immediately to return IOSurface to hardware pool
                 buffer[head] = nil
@@ -156,7 +170,7 @@ public final class FrameQueue: @unchecked Sendable {
             if chosenPts.isValid {
                 lastRenderedPTS = chosenPts.seconds
             }
-            return (chosen, chosenPts)
+            return PoppedFrame(pixelBuffer: chosen, pts: chosenPts, doviMetadata: chosenDovi)
         }
         return nil
     }

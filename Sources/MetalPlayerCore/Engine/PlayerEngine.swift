@@ -118,13 +118,30 @@ public final class PlayerEngine: PlayerEngineProtocol {
                 targetNitsScale = clamped
                 return
             }
+            targetNitsScaleLock.withLock { $0 = clamped }
             recomputeEffectiveTargetNits()
         }
     }
+    @ObservationIgnored
+    private let targetNitsScaleLock = OSAllocatedUnfairLock(initialState: Float(1.0))
+
+    private struct BaseDynamicToneMapState {
+        var basePeakNits: Float = 1000.0
+        var baseTargetNits: Float = 203.0
+        var smoothedPeakNits: Float = 1000.0
+        var smoothedTargetNits: Float = 203.0
+        var lastRenderModeName: String = "Metal SDR"
+    }
+    @ObservationIgnored
+    private let dynamicToneMapLock = OSAllocatedUnfairLock(initialState: BaseDynamicToneMapState())
 
     private func recomputeEffectiveTargetNits() {
         let effective = max(min(baseAdaptiveTargetNits * targetNitsScale, 500.0), 80.0)
         self.metalTargetNits = effective
+        dynamicToneMapLock.withLock {
+            $0.baseTargetNits = effective
+            $0.smoothedTargetNits = effective
+        }
     }
 
     public var metalSharpness: Float = 0.5 {
@@ -315,6 +332,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         self.renderMode = configuration.defaultRenderMode
         self.isToneMappingPermitted = configuration.enableToneMapping
         self.targetNitsScale = configuration.targetNitsScale
+        self.targetNitsScaleLock.withLock { $0 = configuration.targetNitsScale }
         self.baseAdaptiveTargetNits = 203.0
         let effectiveNits = max(min(203.0 * configuration.targetNitsScale, 500.0), 80.0)
         self.metalTargetNits = effectiveNits
@@ -530,11 +548,107 @@ public final class PlayerEngine: PlayerEngineProtocol {
 
             let mode = activeRenderMode
             if mode == .metalToneMap {
+                struct ResolvedToneMapParams {
+                    let hasDoViL2Trim: UInt32
+                    let slope: Float
+                    let offset: Float
+                    let power: Float
+                    let saturation: Float
+                    let peakNits: Float
+                    let targetNits: Float
+                    let modeName: String
+                }
+
+                let resolved = dynamicToneMapLock.withLock { state -> ResolvedToneMapParams in
+                    let scale = self.targetNitsScaleLock.withLock { $0 }
+                    let effectiveBaseTarget = max(min(state.baseTargetNits * scale, 500.0), 80.0)
+
+                    if let dovi = popped.doviMetadata {
+                        let isSceneRefresh = dovi.sceneRefresh
+                        let alpha: Float = isSceneRefresh ? 1.0 : 0.15
+
+                        if let trim = dovi.sdrTrim {
+                            state.lastRenderModeName = "Metal SDR (DoVi L2 Trim)"
+                            return ResolvedToneMapParams(
+                                hasDoViL2Trim: 1,
+                                slope: trim.slope,
+                                offset: trim.offset,
+                                power: trim.power,
+                                saturation: trim.saturationGain,
+                                peakNits: state.basePeakNits,
+                                targetNits: effectiveBaseTarget,
+                                modeName: state.lastRenderModeName
+                            )
+                        } else if let l1 = dovi.l1 {
+                            let dynamicPeak = l1.maxNits > 0 ? l1.maxNits : state.basePeakNits
+                            let rawTarget = Self.computeAdaptiveTargetNits(
+                                baseTargetNits: 203.0,
+                                maxPeakNits: dynamicPeak,
+                                maxFallNits: l1.avgNits
+                            )
+                            let scaledTarget = max(min(rawTarget * scale, 500.0), 80.0)
+
+                            state.smoothedPeakNits = (alpha * dynamicPeak) + ((1.0 - alpha) * state.smoothedPeakNits)
+                            state.smoothedTargetNits =
+                                (alpha * scaledTarget) + ((1.0 - alpha) * state.smoothedTargetNits)
+                            state.lastRenderModeName = "Metal SDR (DoVi L1)"
+
+                            return ResolvedToneMapParams(
+                                hasDoViL2Trim: 0,
+                                slope: 1.0,
+                                offset: 0.0,
+                                power: 1.0,
+                                saturation: 0.0,
+                                peakNits: state.smoothedPeakNits,
+                                targetNits: state.smoothedTargetNits,
+                                modeName: state.lastRenderModeName
+                            )
+                        } else {
+                            state.lastRenderModeName = "Metal SDR"
+                            return ResolvedToneMapParams(
+                                hasDoViL2Trim: 0,
+                                slope: 1.0,
+                                offset: 0.0,
+                                power: 1.0,
+                                saturation: 0.0,
+                                peakNits: state.basePeakNits,
+                                targetNits: effectiveBaseTarget,
+                                modeName: state.lastRenderModeName
+                            )
+                        }
+                    } else {
+                        // Frame without RPU metadata: cleanly revert to container static base values
+                        return ResolvedToneMapParams(
+                            hasDoViL2Trim: 0,
+                            slope: 1.0,
+                            offset: 0.0,
+                            power: 1.0,
+                            saturation: 0.0,
+                            peakNits: state.basePeakNits,
+                            targetNits: effectiveBaseTarget,
+                            modeName: state.lastRenderModeName
+                        )
+                    }
+                }
+
+                metalRenderer?.updateUniforms { uniforms in
+                    uniforms.hasDoViL2Trim = resolved.hasDoViL2Trim
+                    if resolved.hasDoViL2Trim == 1 {
+                        uniforms.doViTrimSlope = resolved.slope
+                        uniforms.doViTrimOffset = resolved.offset
+                        uniforms.doViTrimPower = resolved.power
+                        uniforms.doViTrimSaturation = resolved.saturation
+                    }
+                    uniforms.sourcePeakNits = resolved.peakNits
+                    uniforms.targetNits = resolved.targetNits
+                }
+                let currentModeName = resolved.modeName
+
                 metalRenderer?.render(pixelBuffer: popped.pixelBuffer)
                 performanceMonitor.recordRenderedFrame(
                     durationMs: durationMs,
                     queueCount: qCount,
-                    renderModeName: "Metal SDR",
+                    renderModeName: currentModeName,
                     isDrainPaused: isPaused,
                     avSyncDriftMs: driftMs,
                     droppedFrames: dropped
@@ -878,6 +992,13 @@ public final class PlayerEngine: PlayerEngineProtocol {
         stopPlaybackPipeline()
         clearVideoSurface()
         hasVideo = false
+        dynamicToneMapLock.withLock {
+            $0.basePeakNits = 1000.0
+            $0.baseTargetNits = 203.0
+            $0.smoothedPeakNits = 1000.0
+            $0.smoothedTargetNits = 203.0
+            $0.lastRenderModeName = "Metal SDR"
+        }
         mediaTitle = ""
         artworkData = nil
         artworkURL = nil
@@ -1127,6 +1248,14 @@ public final class PlayerEngine: PlayerEngineProtocol {
             self.metalTargetNits = effectiveTargetNits
             let autoShadowLift: Float =
                 (demuxer.maxFallNits > 0 && demuxer.maxFallNits < 80.0 && self.metalShadowLift == 0.0) ? 0.008 : 0.0
+
+            self.dynamicToneMapLock.withLock {
+                $0.basePeakNits = demuxer.maxPeakNits
+                $0.baseTargetNits = baseAdaptive
+                $0.smoothedPeakNits = demuxer.maxPeakNits
+                $0.smoothedTargetNits = effectiveTargetNits
+                $0.lastRenderModeName = "Metal SDR"
+            }
 
             self.metalRenderer?.updateUniforms { uniforms in
                 uniforms.sourcePeakNits = demuxer.maxPeakNits

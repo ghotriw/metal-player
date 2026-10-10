@@ -101,4 +101,65 @@ struct AdaptiveToneMappingTests {
         engine.targetNitsScale = 1.5
         #expect(abs(engine.metalTargetNits - (203.0 * 1.5)) < 0.01)
     }
+
+    @Test("DolbyVisionRPUParser correctly converts PQ to nits and handles 100-nit trim")
+    func testDolbyVisionPQConversionAndTrim() {
+        // PQ 2081 corresponds to ~100 nits
+        let nits100 = DolbyVisionRPUParser.pqToNits(Float(2081) / 4095.0)
+        #expect(abs(nits100 - 100.0) < 5.0)
+
+        // PQ 3079 corresponds to ~1000 nits
+        let nits1000 = DolbyVisionRPUParser.pqToNits(Float(3079) / 4095.0)
+        #expect(abs(nits1000 - 1000.0) < 50.0)
+
+        // Construct mock Level 2 trim for 100 nits
+        let trim100 = DolbyVisionFrameMetadata.Level2Trim(
+            targetMaxPQ: 2081,
+            trimSlope: 2013,
+            trimOffset: 2016,
+            trimPower: 1339,
+            trimChromaWeight: 2048,
+            trimSaturationGain: 2048
+        )
+        let meta = DolbyVisionFrameMetadata(
+            sceneRefresh: true,
+            l1: DolbyVisionFrameMetadata.Level1(minPQ: 7, maxPQ: 3079, avgPQ: 1229),
+            l2Trims: [trim100]
+        )
+
+        #expect(meta.sdrTrim != nil)
+        #expect(meta.sdrTrim?.targetMaxPQ == 2081)
+        // SMPTE ST 2094-10 inverse conversion: S = 2013 / 4096 + 0.5 ~ 0.991455
+        let expectedSlope = (Float(2013) / 4096.0) + 0.5
+        #expect(abs((meta.sdrTrim?.slope ?? 0.0) - expectedSlope) < 0.0001)
+        // Neutral 2048: O = 0.0, CW = 0.0, SG = 0.0
+        #expect(abs(meta.sdrTrim?.chromaWeight ?? 1.0) < 0.0001)
+        #expect(abs(meta.sdrTrim?.saturationGain ?? 1.0) < 0.0001)
+    }
+
+    @Test("DolbyVisionRPUParser handles unescaping emulation prevention bytes")
+    func testRPUUnescaping() {
+        // [0x00, 0x00, 0x03, 0x01] -> [0x00, 0x00, 0x01]
+        let raw = Data([0x00, 0x00, 0x03, 0x01, 0x00, 0x00, 0x03, 0x02])
+        let unescaped = DolbyVisionRPUParser.unescapeRPU(from: raw)
+        #expect(unescaped == [0x00, 0x00, 0x01, 0x00, 0x00, 0x02])
+    }
+
+    @Test("DolbyVisionRPUParser rejects truncated or invalid payloads safely without crashing")
+    func testInvalidRPUParsing() {
+        // Less than minimum size
+        #expect(DolbyVisionRPUParser.parse(naluData: Data([0x00, 0x00])) == nil)
+        // Random garbage bytes
+        let garbage = Data([0x7C, 0x01, 0x19, 0xFF, 0xFF, 0xFF, 0x00, 0x12])
+        #expect(DolbyVisionRPUParser.parse(naluData: garbage) == nil)
+    }
+
+    @Test("PlayerEngine resets dynamic tone mapping state on stop()")
+    @MainActor
+    func testPlayerEngineToneMappingReset() {
+        let engine = PlayerEngine()
+        #expect(engine.metalTargetNits == 203.0)
+        engine.stop()
+        #expect(engine.metalTargetNits == 203.0)
+    }
 }
