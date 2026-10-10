@@ -38,5 +38,5 @@ jobs:
       - name: Run test suite
         run: swift test
 
-      - name: Package MetalPlayer.app
+      - name: Package Nits.app
         run: ./scripts/bundle_app.sh

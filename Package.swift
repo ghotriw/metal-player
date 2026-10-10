@@ -7,13 +7,13 @@ let defaultSwiftSettings: [SwiftSetting] = [
 ]
 
 let package = Package(
-    name: "MetalPlayer",
+    name: "Nits",
     platforms: [.macOS("27.0")],
     products: [
-        .executable(name: "MetalPlayer", targets: ["MetalPlayerApp"]),
-        .library(name: "MetalPlayerCore", targets: ["MetalPlayerCore"]),
-        .library(name: "MetalPlayerUI", targets: ["MetalPlayerUI"]),
-        .library(name: "MetalPlayerKit", targets: ["MetalPlayerKit"]),
+        .executable(name: "Nits", targets: ["NitsApp"]),
+        .library(name: "NitsCore", targets: ["NitsCore"]),
+        .library(name: "NitsUI", targets: ["NitsUI"]),
+        .library(name: "NitsKit", targets: ["NitsKit"]),
     ],
     targets: [
         .systemLibrary(
@@ -25,7 +25,7 @@ let package = Package(
             ]
         ),
         .target(
-            name: "MetalPlayerCore",
+            name: "NitsCore",
             dependencies: ["CFFmpeg"],
             resources: [
                 .process("Video/HDRToneMapping.metal")
@@ -33,34 +33,34 @@ let package = Package(
             swiftSettings: defaultSwiftSettings
         ),
         .target(
-            name: "MetalPlayerUI",
-            dependencies: ["MetalPlayerCore"],
+            name: "NitsUI",
+            dependencies: ["NitsCore"],
             resources: [
                 .process("Shaders/SubtitleShaders.metal")
             ],
             swiftSettings: defaultSwiftSettings
         ),
         .target(
-            name: "MetalPlayerKit",
-            dependencies: ["MetalPlayerCore", "MetalPlayerUI"],
+            name: "NitsKit",
+            dependencies: ["NitsCore", "NitsUI"],
             swiftSettings: defaultSwiftSettings
         ),
         .executableTarget(
-            name: "MetalPlayerApp",
-            dependencies: ["MetalPlayerCore", "MetalPlayerUI", "MetalPlayerKit"],
+            name: "NitsApp",
+            dependencies: ["NitsCore", "NitsUI", "NitsKit"],
             resources: [
                 .process("Resources")
             ],
             swiftSettings: defaultSwiftSettings
         ),
         .testTarget(
-            name: "MetalPlayerCoreTests",
-            dependencies: ["MetalPlayerCore"],
+            name: "NitsCoreTests",
+            dependencies: ["NitsCore"],
             swiftSettings: defaultSwiftSettings
         ),
         .testTarget(
-            name: "MetalPlayerKitTests",
-            dependencies: ["MetalPlayerKit", "MetalPlayerUI"],
+            name: "NitsKitTests",
+            dependencies: ["NitsKit", "NitsUI"],
             swiftSettings: defaultSwiftSettings
         ),
     ]

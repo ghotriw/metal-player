@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Logo & App Icon generation pipeline for MetalPlayer.
+Logo & App Icon generation pipeline for Nits.
 
 Features:
 - Renders SVGs from template.svg + themes.json
@@ -20,7 +20,7 @@ LOGO_DIR = ROOT_DIR / "logo"
 TEMPLATE_PATH = LOGO_DIR / "template.svg"
 THEMES_PATH = LOGO_DIR / "themes.json"
 DIST_DIR = ROOT_DIR / "build" / "logo"
-APP_RESOURCES_DIR = ROOT_DIR / "Sources" / "MetalPlayerApp" / "Resources"
+APP_RESOURCES_DIR = ROOT_DIR / "Sources" / "NitsApp" / "Resources"
 DEFAULT_ICNS_PATH = APP_RESOURCES_DIR / "AppIcon.icns"
 
 ICONSET_SPECS = [

@@ -1,6 +1,6 @@
-# MetalPlayer: Architecture & Roadmap
+# Nits: Architecture & Roadmap
 
-This document outlines the architecture, current implementation status, and development roadmap for `MetalPlayer`.
+This document outlines the architecture, current implementation status, and development roadmap for `Nits`.
 The goal is to evolve the dual-engine video rendering core into a complete standalone media player with audio playback, subtitle rendering, network streaming, and host integration capabilities (e.g., embedding into a `WKWebView`-based Emby/Jellyfin client).
 
 ---
@@ -13,7 +13,7 @@ The goal is to evolve the dual-engine video rendering core into a complete stand
 - [x] **Hardware HEVC VideoToolbox Decoder:** P010 biplanar YCbCr, MSB normalization.
 - [x] **Dynamic Color Metadata:** Extract primaries/TRC/matrix from FFmpeg `codecpar` and NAL SEI/VUI.
 - [x] **Annex B & MP4/HVCC Normalization:** Robust container support for MKV, TS, MP4, and raw HEVC streams.
-- [x] **Modular SPM Decomposition:** `MetalPlayerCore` (pure system library without `unsafeFlags`), `MetalPlayerUI`, `MetalPlayerKit`, `MetalPlayerApp`.
+- [x] **Modular SPM Decomposition:** `NitsCore` (pure system library without `unsafeFlags`), `NitsUI`, `NitsKit`, `NitsApp`.
 
 ---
 
@@ -93,7 +93,7 @@ flowchart TD
   - Volume control (`volume: 0.0 ... 1.0`), mute toggle (`isMuted: Bool`), custom UI slider and track picker in `ControlsOverlay`.
   - Flush audio decoder and renderer buffers on seek and track change.
 - [x] **2.4. App Bundle Lifecycle & System Integration:**
-  - Build and ad-hoc sign `MetalPlayer.app` with `CFBundleIdentifier` (`com.ghotriw.metalplayer`) via `scripts/bundle_app.sh`, enabling macOS Control Center integration.
+  - Build and ad-hoc sign `Nits.app` with `CFBundleIdentifier` (`com.ghotriw.nits`) via `scripts/bundle_app.sh`, enabling macOS Control Center integration.
   - Implement native window controller and `AppDelegate` with `applicationShouldTerminateAfterLastWindowClosed = true` and standard macOS menu shortcuts (`⌘Q`, `⌘W`, `⌘O`).
 - [x] **2.5. System Media Controls & Now Playing Integration:**
   - Dual-backend architecture: modern `NowPlaying.framework` (`MediaSession` on macOS 27+) and backward-compatible `MediaPlayer` (`MPNowPlayingInfoCenter` / `MPRemoteCommandCenter`).
@@ -162,7 +162,7 @@ flowchart TD
 ---
 
 ### Stage 5: Host Integration Bridge (WKWebView Two-Way Bridge)
-> Enable embedding MetalPlayer as a native high-performance rendering backend inside hybrid web applications.
+> Enable embedding Nits as a native high-performance rendering backend inside hybrid web applications.
 
 - **5.1. Embedded Native Video Canvas:**
   - `NativeVideoHostView` as an embeddable `NSView` without intrusive UI chrome.
@@ -206,10 +206,10 @@ flowchart TD
 > Eliminate developer environment dependencies (Homebrew FFmpeg) for zero-friction distribution to end users.
 
 - **7.1. Dynamic Library Bundling (Dylib Bundling):**
-  - Populate `Contents/Frameworks` within `MetalPlayer.app`.
+  - Populate `Contents/Frameworks` within `Nits.app`.
   - Copy required FFmpeg dylibs (`libavformat`, `libavcodec`, `libavutil`, `libswresample`) and their transitive dependencies.
   - Rewrite dynamic linker paths using `install_name_tool`: replace hardcoded `/opt/homebrew/...` paths with `@rpath` (`@executable_path/../Frameworks`).
-  - Configure `LC_RPATH` (`@loader_path/../Frameworks`) in `MetalPlayer` executable.
+  - Configure `LC_RPATH` (`@loader_path/../Frameworks`) in `Nits` executable.
 - **7.2. CI Automation & Release Artifacts:**
   - Add `--standalone` / `--release` flags to `scripts/bundle_app.sh`.
   - Validate bundle with `otool -L`: verify zero references to non-system directories outside `/System/Library` and `/usr/lib`.

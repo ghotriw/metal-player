@@ -1,4 +1,4 @@
-# <img src="docs/logo.svg" width="40" height="40" valign="bottom" /> MetalPlayer
+# <img src="docs/logo.svg" width="40" height="40" valign="bottom" /> Nits
 
 A video player for macOS built on VideoToolbox, AVSampleBufferDisplayLayer, and Metal.
 
@@ -27,26 +27,26 @@ Details: [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## API Usage
 
-Add `MetalPlayer` to your `Package.swift`:
+Add `Nits` to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(path: "../metal-player") // or git repository URL
+    .package(path: "../nits") // or git repository URL
 ],
 targets: [
     .target(
         name: "YourApp",
         dependencies: [
-            .product(name: "MetalPlayerKit", package: "metal-player")
+            .product(name: "NitsKit", package: "nits")
         ]
     )
 ]
 ```
 
-### High-level Window API (`MetalPlayerKit`)
+### High-level Window API (`NitsKit`)
 
 ```swift
-import MetalPlayerKit
+import NitsKit
 
 let controller = PlayerWindowController()
 
@@ -89,7 +89,7 @@ controller.onClose = { finalTime, duration in
 
 ### Logging
 
-Player logs go through `AppLog`, which writes to `os.Logger` and to `~/Library/Application Support/MetalPlayer/player.log`. A host app can use it too:
+Player logs go through `AppLog`, which writes to `os.Logger` and to `~/Library/Application Support/Nits/player.log`. A host app can use it too:
 
 ```swift
 AppLog.info(.host, "Session started")
@@ -98,10 +98,10 @@ LogViewerWindowController.shared.show() // or ⌥⌘L
 
 Details: [docs/LOGGING.md](docs/LOGGING.md).
 
-### Low-level Rendering Engine (`MetalPlayerCore`)
+### Low-level Rendering Engine (`NitsCore`)
 
 ```swift
-import MetalPlayerCore
+import NitsCore
 
 let engine = PlayerEngine()
 
@@ -118,9 +118,9 @@ await engine.loadAsync(
 Arguments work with `swift run`, the bundle script, and `open --args`:
 
 ```bash
-swift run MetalPlayer --no-osd ~/Movies/sample.mkv
+swift run Nits --no-osd ~/Movies/sample.mkv
 ./scripts/bundle_app.sh --run --render-mode=system --audio-track=jpn ~/Movies/movie.mkv
-open build/MetalPlayer.app --args --start-time=120 ~/Movies/movie.mkv
+open build/Nits.app --args --start-time=120 ~/Movies/movie.mkv
 ```
 
 | Option | Description |

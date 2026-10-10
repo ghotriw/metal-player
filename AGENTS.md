@@ -56,9 +56,9 @@ If a multi-step inspection or test script is strictly necessary:
 2. Run the script via `python3 path/to/script.py`.
 3. Clean up the temporary file if it is no longer needed.
 
-# MetalPlayer Core Architecture & Regression Prevention Rules
+# Nits Core Architecture & Regression Prevention Rules
 
-This document defines the core architecture principles, colorimetry standards, threading invariants, and architectural decoupling rules for `MetalPlayer`. Any future additions (audio pipeline, subtitle renderers, UI, additional container/codec formats) **must strictly adhere** to these rules to prevent regressions.
+This document defines the core architecture principles, colorimetry standards, threading invariants, and architectural decoupling rules for `Nits`. Any future additions (audio pipeline, subtitle renderers, UI, additional container/codec formats) **must strictly adhere** to these rules to prevent regressions.
 
 ---
 
@@ -87,11 +87,11 @@ Deliver reference-grade playback of HDR and Dolby Vision (Profile 8.1 / HDR10) v
 The codebase is split into strictly separated modular layers to prevent UI changes from polluting or breaking low-level media pipelines:
 
 ```
-[Presentation UI Layer (MetalPlayerUI / AppKit)]
+[Presentation UI Layer (NitsUI / AppKit)]
                ↓ (observes state via @Observable & dispatches actions)
-[Windowing & App Integration Layer (MetalPlayerKit)]
+[Windowing & App Integration Layer (NitsKit)]
                ↓ (coordinates window, menus, NowPlaying & delegates)
-[Engine Core & Contract Protocol (MetalPlayerCore)]
+[Engine Core & Contract Protocol (NitsCore)]
   ├─ protocol PlayerEngineProtocol (@MainActor, Sendable)
   └─ final class PlayerEngine (@Observable, @MainActor, zero SwiftUI dependency)
                ↓ (internal subsystems)
@@ -99,17 +99,17 @@ The codebase is split into strictly separated modular layers to prevent UI chang
 ```
 
 ### 2.1. Layer 1: Headless Engine Core (`PlayerEngine: PlayerEngineProtocol`)
-- **Zero SwiftUI Dependency:** Located in `MetalPlayerCore`. Must never import SwiftUI or depend on UI views, buttons, layouts, or control state.
+- **Zero SwiftUI Dependency:** Located in `NitsCore`. Must never import SwiftUI or depend on UI views, buttons, layouts, or control state.
 - **Responsibilities:** Demuxing, decoding, hardware master clock synchronization, Metal rendering, frame queues, EDR/screen handover, playback history persistence.
 - **Direct SwiftUI Observability:** Employs the Swift `Observation` framework (`@Observable`) directly on `PlayerEngine`. Per Apple's modern architecture standards, field-level observation eliminates redundant intermediate ViewModel wrappers while ensuring UI views re-evaluate only when the specific properties they read change.
 - **Public Surface:** Implements `protocol PlayerEngineProtocol` and exports a lightweight `NSView` video canvas (`NativeVideoHostView`).
 
-### 2.2. Layer 2: Windowing & Application Integration (`MetalPlayerKit`)
+### 2.2. Layer 2: Windowing & Application Integration (`NitsKit`)
 - Lives on `@MainActor`.
 - Manages window lifecycle (`PlayerWindowController`, `PlayerWindow`), menu commands (`PlayerCommands`), and system media integration (`NowPlayingController`).
 - Connects the engine core with the presentation UI without coupling low-level media logic to window state.
 
-### 2.3. Layer 3: Presentation UI (`MetalPlayerUI`)
+### 2.3. Layer 3: Presentation UI (`NitsUI`)
 - Purely declarative UI components (`ContentView`, `ControlsOverlay`, `TimelineSlider`, `SettingsView`, `PerformanceHUDView`, `SubtitleOverlayView`).
 - Consumes `PlayerEngine` via Swift Observation and isolates transient UI state (fullscreen transitions, auto-hide triggers) inside lightweight `@Observable class PlayerUIState`.
 - Changing, rewriting, or animating UI components must never impact or require changes to decoding loops, Metal shaders, or A/V sync.
@@ -231,6 +231,6 @@ To support embedding into host applications with web-driven frontends (e.g., `WK
 
 ### 4.4. Test Media Policy
 - Tests must never reference personal/local media files or absolute user paths.
-- All media is synthesized on demand by `SyntheticTestMediaFactory` (FFmpeg `lavfi`, cached in `$TMPDIR/MetalPlayerSyntheticMedia/`). Add a new `Preset` there when a new codec/channel/container/HDR configuration needs coverage.
+- All media is synthesized on demand by `SyntheticTestMediaFactory` (FFmpeg `lavfi`, cached in `$TMPDIR/NitsSyntheticMedia/`). Add a new `Preset` there when a new codec/channel/container/HDR configuration needs coverage.
 - Frame-freeze detection uses `PixelBufferAnalyzer` (Y-plane hash / MAD).
 - If `ffmpeg` is missing, media-dependent tests skip silently; CI must install `ffmpeg`.

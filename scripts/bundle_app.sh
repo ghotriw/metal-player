@@ -4,10 +4,10 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
 
-echo "==> Building MetalPlayer with swift build..."
-swift build -c debug
+echo "==> Building Nits with swift build..."
+swift build -c debug --disable-sandbox
 
-APP_DIR="$DIR/build/MetalPlayer.app"
+APP_DIR="$DIR/build/Nits.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
@@ -17,14 +17,14 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR"
 mkdir -p "$RESOURCES_DIR"
 
-BIN_PATH="$DIR/.build/out/Products/Debug/MetalPlayer"
+BIN_PATH="$DIR/.build/out/Products/Debug/Nits"
 if [ ! -f "$BIN_PATH" ]; then
     # Fallback to standard swiftpm debug path if custom out path is absent
-    BIN_PATH="$(swift build --show-bin-path)/MetalPlayer"
+    BIN_PATH="$(swift build --show-bin-path)/Nits"
 fi
 
-cp "$BIN_PATH" "$MACOS_DIR/MetalPlayer"
-chmod +x "$MACOS_DIR/MetalPlayer"
+cp "$BIN_PATH" "$MACOS_DIR/Nits"
+chmod +x "$MACOS_DIR/Nits"
 
 # Copy any resource bundles
 for b in "$DIR/.build/out/Products/Debug/"*.bundle; do
@@ -34,7 +34,7 @@ for b in "$DIR/.build/out/Products/Debug/"*.bundle; do
 done
 
 # Copy app icon if present in project resources
-APP_ICON="$DIR/Sources/MetalPlayerApp/Resources/AppIcon.icns"
+APP_ICON="$DIR/Sources/NitsApp/Resources/AppIcon.icns"
 if [ -f "$APP_ICON" ]; then
     echo "==> Including AppIcon.icns..."
     cp "$APP_ICON" "$RESOURCES_DIR/AppIcon.icns"
@@ -49,15 +49,15 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>MetalPlayer</string>
+    <string>Nits</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.ghotriw.metalplayer</string>
+    <string>com.ghotriw.nits</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>MetalPlayer</string>
+    <string>Nits</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -231,7 +231,7 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
 </plist>
 EOF
 
-echo "==> Codesigning MetalPlayer.app..."
+echo "==> Codesigning Nits.app..."
 codesign --force --deep -s - "$APP_DIR"
 
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
@@ -243,7 +243,7 @@ fi
 echo "==> Done! App bundle created at $APP_DIR"
 if [ "$1" == "--run" ]; then
     shift
-    echo "==> Launching MetalPlayer.app..."
+    echo "==> Launching Nits.app..."
     if [ $# -gt 0 ]; then
         open "$APP_DIR" --args "$@"
     else

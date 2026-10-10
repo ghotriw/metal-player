@@ -1,17 +1,17 @@
 # Logging
 
-All player logs go through `AppLog` (`MetalPlayerCore`). Each message is sent to:
+All player logs go through `AppLog` (`NitsCore`). Each message is sent to:
 
-- `os.Logger`, subsystem `com.metalplayer`
+- `os.Logger`, subsystem `com.nits`
 - an in-memory buffer of the last 2000 entries, used by the log viewer
-- `~/Library/Application Support/MetalPlayer/player.log`, written asynchronously
+- `~/Library/Application Support/Nits/player.log`, written asynchronously
 
 Messages below `AppLog.minimumLogLevel` are not formatted (the message is an `@autoclosure`).
 
 ## Logging from a host app
 
 ```swift
-import MetalPlayerCore
+import NitsCore
 
 AppLog.info(.host, "Playback session started")
 AppLog.warning("Network", "Retrying range request")  // ad-hoc category
@@ -36,7 +36,7 @@ AppLog.minimumLogLevel = .debug
 ## Log viewer
 
 ```swift
-import MetalPlayerKit
+import NitsKit
 
 LogViewerWindowController.shared.show()
 ```
@@ -46,8 +46,8 @@ The menu command `PlayerCommands.LogConsoleMenuCommand()` binds it to ⌥⌘L. T
 ## Reading logs from the terminal
 
 ```bash
-tail -f ~/Library/Application\ Support/MetalPlayer/player.log
+tail -f ~/Library/Application\ Support/Nits/player.log
 
-log stream --predicate 'subsystem == "com.metalplayer"' --level debug
-log show --predicate 'subsystem == "com.metalplayer"' --last 10m --info --debug
+log stream --predicate 'subsystem == "com.nits"' --level debug
+log show --predicate 'subsystem == "com.nits"' --last 10m --info --debug
 ```

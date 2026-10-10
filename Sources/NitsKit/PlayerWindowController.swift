@@ -1,0 +1,424 @@
+import AppKit
+import NitsCore
+import NitsUI
+import SwiftUI
+
+@MainActor
+public final class PlayerWindowController: NSWindowController, NSWindowDelegate {
+    public let engine: PlayerEngine
+    public let uiState = PlayerUIState()
+    public let nowPlayingController: any NowPlayingController
+    /// Callback triggered before player window closes: (finalTime, duration)
+    public var onClose: ((_ finalTime: Double, _ duration: Double) -> Void)?
+    public var onKeyStatusChanged: ((Bool) -> Void)?
+
+    /// Periodic time observer callback: (currentTime, duration)
+    public var onTimeUpdate: ((_ currentTime: Double, _ duration: Double) -> Void)?
+    /// Playback state change callback
+    public var onPlaybackStateChanged: ((PlaybackState) -> Void)?
+    /// Dedicated callback when video finishes playing to the end
+    public var onPlaybackEnded: (() -> Void)?
+
+    private var lastLoggedTimeSeconds: Double = -1.0
+
+    public func applyConfiguration(_ config: PlayerConfiguration) {
+        engine.applyConfiguration(config)
+    }
+
+    private var standardButtons: [NSButton] {
+        ([.closeButton, .miniaturizeButton, .zoomButton] as [NSWindow.ButtonType]).compactMap {
+            window?.standardWindowButton($0)
+        }
+    }
+
+    public init(configuration: PlayerConfiguration = PlayerConfiguration()) {
+        let engine = PlayerEngine(configuration: configuration)
+        self.engine = engine
+        self.nowPlayingController = NowPlayingControllerFactory.makeController(engine: engine)
+        let window = PlayerWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 960, height: 540),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+
+        super.init(window: window)
+        nowPlayingController.actions = self
+        window.actionHandler = self
+
+        window.title = "Nits"
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
+        window.titlebarSeparatorStyle = .none
+        window.isMovableByWindowBackground = true
+
+        window.center()
+        window.delegate = self
+        window.isReleasedWhenClosed = false
+        updateToolbar(isFullscreen: false)
+
+        let contentView = ContentView(
+            engine: engine,
+            uiState: uiState,
+            onFileLoaded: { [weak self] url in
+                self?.window?.title = url.lastPathComponent
+            },
+            onControlsVisibilityChanged: { [weak self] isVisible in
+                self?.updateTrafficLightsVisibility(isVisible: isVisible)
+                if !isVisible, self?.window?.isKeyWindow == true {
+                    NSCursor.setHiddenUntilMouseMoves(true)
+                }
+            },
+            onToggleFullscreen: { [weak self] in
+                self?.toggleFullscreen()
+            }
+        )
+        .focusedSceneValue(\.playerActions, self)
+
+        let hostingView = NSHostingView(rootView: contentView)
+        window.contentView = hostingView
+        window.initialFirstResponder = hostingView
+
+        engine.onTimeUpdate = { [weak self] current, dur in
+            guard let self else { return }
+
+            if abs(current - self.lastLoggedTimeSeconds) >= 5.0 {
+                self.lastLoggedTimeSeconds = current
+                AppLog.debug(
+                    .engine,
+                    "Playback progress: \(String(format: "%.1f", current))s / \(String(format: "%.1f", dur))s"
+                )
+            }
+
+            self.onTimeUpdate?(current, dur)
+            self.nowPlayingController.update(
+                title: self.engine.mediaTitle,
+                currentTime: current,
+                duration: dur,
+                isPlaying: self.engine.isPlaying,
+                artworkData: self.engine.artworkData,
+                artworkURL: self.engine.artworkURL
+            )
+        }
+        engine.onPlaybackStateChanged = { [weak self] state in
+            guard let self else { return }
+
+            switch state {
+            case .idle:
+                AppLog.info(.engine, "Playback state: idle")
+            case .loading:
+                AppLog.info(.engine, "Playback state: loading '\(self.engine.mediaTitle)'")
+            case .playing:
+                AppLog.info(
+                    .engine,
+                    "Playback state: playing at \(String(format: "%.2f", self.engine.currentTime))s"
+                )
+            case .paused:
+                AppLog.info(
+                    .engine,
+                    "Playback state: paused at \(String(format: "%.2f", self.engine.currentTime))s"
+                )
+            case .completed:
+                AppLog.info(.engine, "Playback state: completed (EOF reached)")
+            case .failed(let error):
+                AppLog.error(.engine, "Playback state: failed with error: '\(error)'")
+            }
+
+            self.onPlaybackStateChanged?(state)
+            switch state {
+            case .playing:
+                self.nowPlayingController.update(
+                    title: self.engine.mediaTitle,
+                    currentTime: self.engine.currentTime,
+                    duration: self.engine.duration,
+                    isPlaying: true,
+                    artworkData: self.engine.artworkData,
+                    artworkURL: self.engine.artworkURL
+                )
+            case .paused:
+                self.nowPlayingController.update(
+                    title: self.engine.mediaTitle,
+                    currentTime: self.engine.currentTime,
+                    duration: self.engine.duration,
+                    isPlaying: false,
+                    artworkData: self.engine.artworkData,
+                    artworkURL: self.engine.artworkURL
+                )
+            case .idle, .failed, .completed:
+                self.nowPlayingController.clear()
+                if state == .completed {
+                    AppLog.info(.engine, "Playback ended naturally")
+                    self.onPlaybackEnded?()
+                }
+            case .loading:
+                break
+            }
+        }
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    public func openFile(
+        url: URL,
+        title: String? = nil,
+        artworkData: Data? = nil,
+        artworkURL: URL? = nil,
+        startTime: Double? = nil,
+        audioTrack: String? = nil,
+        subtitleTrack: String? = nil
+    ) {
+        openStream(
+            url: url,
+            title: title,
+            artworkData: artworkData,
+            artworkURL: artworkURL,
+            headers: [:],
+            startTime: startTime,
+            audioTrack: audioTrack,
+            subtitleTrack: subtitleTrack
+        )
+    }
+
+    public func openStream(
+        url: URL,
+        title: String? = nil,
+        artworkData: Data? = nil,
+        artworkURL: URL? = nil,
+        headers: [String: String] = [:],
+        startTime: Double? = nil,
+        audioTrack: String? = nil,
+        subtitleTrack: String? = nil
+    ) {
+        let isNetwork = MediaDemuxer.isNetworkURL(url.absoluteString)
+        let pathString = isNetwork ? url.absoluteString : url.path
+
+        engine.load(
+            path: pathString,
+            title: title,
+            artworkData: artworkData,
+            artworkURL: artworkURL,
+            headers: headers,
+            startTime: startTime,
+            audioTrack: audioTrack,
+            subtitleTrack: subtitleTrack
+        )
+        window?.title = engine.mediaTitle
+
+        showWindow(nil)
+        NSApp.activate()
+        window?.makeKeyAndOrderFront(nil)
+        if let contentView = window?.contentView {
+            window?.makeFirstResponder(contentView)
+        }
+        updateTrafficLightsVisibility(isVisible: true)
+        onKeyStatusChanged?(true)
+    }
+
+    public func exitFullscreen() {
+        guard let window, window.styleMask.contains(.fullScreen) else { return }
+        window.toggleFullScreen(nil)
+    }
+
+    public override func cancelOperation(_ sender: Any?) {
+        if window?.styleMask.contains(.fullScreen) == true {
+            exitFullscreen()
+        } else {
+            super.cancelOperation(sender)
+        }
+    }
+
+    private func updateTrafficLightsVisibility(isVisible: Bool) {
+        guard let window, !window.styleMask.contains(.fullScreen) else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            for button in standardButtons {
+                button.animator().alphaValue = isVisible ? 1.0 : 0.0
+            }
+        }
+    }
+
+    private func updateToolbar(isFullscreen: Bool) {
+        guard let window else { return }
+        if isFullscreen {
+            window.toolbar = nil
+        } else {
+            let toolbar = NSToolbar()
+            toolbar.displayMode = .iconOnly
+            window.toolbar = toolbar
+            window.toolbarStyle = .unifiedCompact
+        }
+    }
+
+    public func windowDidBecomeKey(_ notification: Notification) {
+        if let contentView = window?.contentView {
+            window?.makeFirstResponder(contentView)
+        }
+        onKeyStatusChanged?(true)
+        nowPlayingController.isKeyWindow = true
+    }
+
+    public func windowDidResignKey(_ notification: Notification) {
+        onKeyStatusChanged?(false)
+        nowPlayingController.isKeyWindow = false
+    }
+
+    public func windowWillEnterFullScreen(_ notification: Notification) {
+        updateToolbar(isFullscreen: true)
+        window?.titleVisibility = .visible
+        window?.titlebarAppearsTransparent = false
+        uiState.isFullscreen = true
+        for button in standardButtons {
+            button.alphaValue = 1.0
+        }
+    }
+
+    public func windowDidFailToEnterFullScreen(_ window: NSWindow) {
+        updateToolbar(isFullscreen: false)
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        uiState.isFullscreen = false
+    }
+
+    public func windowWillExitFullScreen(_ notification: Notification) {
+        window?.titleVisibility = .hidden
+    }
+
+    public func windowDidExitFullScreen(_ notification: Notification) {
+        updateToolbar(isFullscreen: false)
+        window?.titlebarAppearsTransparent = true
+        uiState.isFullscreen = false
+    }
+
+    public func windowWillClose(_ notification: Notification) {
+        let finalTime = engine.currentTime
+        let finalDuration = engine.duration
+        AppLog.info(
+            .ui,
+            "Player window closing for: '\(engine.mediaTitle)' at \(String(format: "%.2f", finalTime))s / \(String(format: "%.2f", finalDuration))s"
+        )
+        onClose?(finalTime, finalDuration)
+        nowPlayingController.clear()
+        engine.stop()
+    }
+}
+
+extension PlayerWindowController: PlayerActions {
+    public var renderMode: RenderMode {
+        get { engine.renderMode }
+        set {
+            engine.renderMode = newValue
+            // uiState.showControlsTemporarily()
+            if engine.enableOSD {
+                uiState.osd.show(.renderMode(modeName: newValue.rawValue))
+            }
+        }
+    }
+
+    public var metalSharpness: Float {
+        get { engine.metalSharpness }
+        set {
+            engine.metalSharpness = newValue
+            if engine.enableOSD {
+                uiState.osd.show(.sharpness(value: newValue))
+            }
+        }
+    }
+
+    public var isMuted: Bool {
+        engine.isMuted
+    }
+
+    public var showDebugHUD: Bool {
+        engine.showDebugHUD
+    }
+
+    public func togglePlayPause() {
+        engine.togglePlayPause()
+        // uiState.showControlsTemporarily()
+        if engine.enableOSD {
+            uiState.osd.show(engine.isPlaying ? .play : .pause)
+        }
+    }
+
+    public func stepFrameForward() {
+        engine.stepFrameForward()
+        if engine.enableOSD {
+            uiState.osd.show(.frameStep(forward: true))
+        }
+    }
+
+    public func stepFrameBackward() {
+        engine.stepFrameBackward()
+        if engine.enableOSD {
+            uiState.osd.show(.frameStep(forward: false))
+        }
+    }
+
+    public func seekRelative(by seconds: Double) {
+        engine.seekRelative(by: seconds)
+        if engine.enableOSD {
+            uiState.osd.show(.seek(offsetSeconds: seconds, currentTime: engine.currentTime, duration: engine.duration))
+        }
+    }
+
+    public func stepVolume(by delta: Float) {
+        engine.stepVolume(by: delta)
+        if engine.enableOSD {
+            uiState.osd.show(.volume(level: engine.volume, isMuted: engine.isMuted))
+        }
+    }
+
+    public func toggleMute() {
+        engine.toggleMute()
+        if engine.enableOSD {
+            uiState.osd.show(.volume(level: engine.volume, isMuted: engine.isMuted))
+        }
+    }
+
+    public func toggleDebugHUD() {
+        withAnimation {
+            engine.toggleDebugHUD()
+        }
+    }
+
+    public func toggleFullscreen() {
+        window?.toggleFullScreen(nil)
+    }
+
+    public var canJumpToTime: Bool {
+        engine.isLoaded && engine.duration > 0
+    }
+
+    public var isJumpToPresented: Bool {
+        uiState.isJumpToPresented
+    }
+
+    public func promptJumpToTime() {
+        guard canJumpToTime else { return }
+        if uiState.isJumpToPresented {
+            dismissJumpToTime()
+        } else {
+            let wasPlaying = engine.isPlaying
+            if wasPlaying {
+                engine.pause()
+            }
+            withAnimation(.spring(duration: 0.25)) {
+                uiState.showJumpTo(wasPlaying: wasPlaying)
+            }
+        }
+    }
+
+    public func dismissJumpToTime() {
+        guard uiState.isJumpToPresented else { return }
+        let shouldResume = uiState.dismissJumpTo()
+        withAnimation(.spring(duration: 0.25)) {
+            uiState.isJumpToPresented = false
+        }
+        if shouldResume {
+            engine.play()
+        }
+    }
+}
