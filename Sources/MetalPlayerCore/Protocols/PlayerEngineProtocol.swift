@@ -101,7 +101,9 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor func pause()
     @MainActor func togglePlayPause()
     @MainActor func seek(to seconds: Double)
+    @MainActor func seek(to seconds: Double, exact: Bool)
     @MainActor func seekRelative(by seconds: Double)
+    @MainActor func seekRelative(by seconds: Double, exact: Bool)
     @MainActor func stepFrameForward()
     @MainActor func stepFrameBackward()
     @MainActor func stepVolume(by delta: Float)
@@ -109,6 +111,18 @@ public protocol PlayerEngineProtocol: AnyObject, Sendable {
     @MainActor func toggleDebugHUD()
     @MainActor func renderCurrentFrame()
     @MainActor func selectAudioTrack(id: Int)
+}
+
+extension PlayerEngineProtocol {
+    @MainActor
+    public func seek(to seconds: Double) {
+        seek(to: seconds, exact: true)
+    }
+
+    @MainActor
+    public func seekRelative(by seconds: Double) {
+        seekRelative(by: seconds, exact: false)
+    }
 }
 
 extension PlayerEngineProtocol {

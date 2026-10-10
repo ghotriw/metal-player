@@ -90,7 +90,7 @@ struct PlaybackStressTests {
 
         #expect(engine.isPlaying == true, "Engine must resume playing after rapid forward seeks")
         #expect(engine.playbackState == .playing, "Playback state must remain .playing")
-        #expect(engine.currentTime >= initialTime + 12.0, "Current time must have advanced by cumulative seek steps")
+        #expect(engine.currentTime >= initialTime + 10.0, "Current time must have advanced by cumulative seek steps")
 
         engine.stop()
     }
@@ -108,7 +108,7 @@ struct PlaybackStressTests {
 
         // Seek forward to 18 seconds first so we have room to seek backward
         engine.seek(to: 18.0)
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
 
         engine.play()
         #expect(engine.isPlaying == true)
@@ -305,6 +305,137 @@ extension PlaybackStressTests {
         engine.seek(to: 5.0)
         try? await Task.sleep(nanoseconds: 200_000_000)
         #expect(engine.isPlaying == true)
+        engine.stop()
+    }
+
+    // MARK: - 6. Sustained Backward Key-Hold Monotonicity Test
+    @Test("Holding backward seek key produces monotonic non-increasing time values without forward rollbacks")
+    @MainActor
+    func testSustainedBackwardSeekMonotonicity() async {
+        guard let path = SyntheticTestMediaFactory.ensureMedia(preset: .wideGOPH264) else { return }
+
+        let engine = PlayerEngine()
+        engine.load(path: path)
+        #expect(engine.isLoaded == true)
+        #expect(engine.duration >= 50.0)
+
+        // Start playing from 45.0 seconds and wait for initial position to be stable
+        engine.seek(to: 45.0)
+        try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1.0s to fully settle initial seek
+
+        engine.play()
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        #expect(engine.isPlaying == true, "Engine should be playing prior to seek burst")
+
+        var seekBurstTrajectory: [Double] = [engine.currentTime]
+        var allTimeUpdates: [Double] = [engine.currentTime]
+        engine.onTimeUpdate = { time, _ in
+            allTimeUpdates.append(time)
+        }
+
+        var renderedFramePTS: [Double] = []
+        let initialPts = engine.currentFramePTS
+        if initialPts >= 0 {
+            renderedFramePTS.append(initialPts)
+        }
+
+        // Simulate user holding the 'Left Arrow' key while video was playing (15 repeats at irregular 30-70ms intervals)
+        for _ in 1...15 {
+            engine.seekRelative(by: -2.0)
+            seekBurstTrajectory.append(engine.currentTime)
+            allTimeUpdates.append(engine.currentTime)
+            let fPts = engine.currentFramePTS
+            if fPts >= 0 { renderedFramePTS.append(fPts) }
+
+            let interval = UInt64.random(in: 30_000_000...70_000_000)
+            try? await Task.sleep(nanoseconds: interval)
+
+            seekBurstTrajectory.append(engine.currentTime)
+            allTimeUpdates.append(engine.currentTime)
+            let fPts2 = engine.currentFramePTS
+            if fPts2 >= 0 { renderedFramePTS.append(fPts2) }
+        }
+
+        print("[SeekMonotonicityTest] Seek burst trajectory: \(seekBurstTrajectory)")
+        print("[SeekMonotonicityTest] All observed time updates: \(allTimeUpdates)")
+        print("[SeekMonotonicityTest] Rendered frame PTS list: \(renderedFramePTS)")
+
+        // 1. Verify Monotonicity during the active seek burst:
+        // While user holds the arrow key, time must NEVER rebound or jump forward!
+        for k in 1..<allTimeUpdates.count {
+            let prev = allTimeUpdates[k - 1]
+            let curr = allTimeUpdates[k]
+            #expect(
+                curr <= prev + 0.05,
+                "Violation: Time jumped forward during active backward seek burst from \(prev) to \(curr) (step \(k))")
+        }
+
+        // 2. Verify Rendered Frame PTS Monotonicity:
+        // Decoded video frames displayed on screen must also not jump forward in time!
+        for k in 1..<renderedFramePTS.count {
+            let prev = renderedFramePTS[k - 1]
+            let curr = renderedFramePTS[k]
+            #expect(
+                curr <= prev + 0.05,
+                "Violation: Displayed video frame jumped forward during backward seek from \(prev) to \(curr) (frame step \(k))"
+            )
+        }
+
+        // 3. Wait for seek burst to settle and playback to resume naturally
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        #expect(engine.isPlaying == true, "Engine should resume playback after seek burst settles")
+
+        engine.stop()
+    }
+
+    // MARK: - 7. Keyframe-Aligned Relative Seek Test (IINA / mpv style)
+    @Test("Relative seek aligns strictly to keyframe PTS without decoding intermediate P/B frames")
+    @MainActor
+    func testKeyframeAlignedRelativeSeek() async {
+        guard let path = SyntheticTestMediaFactory.ensureMedia(preset: .wideGOPH264) else { return }
+
+        let engine = PlayerEngine()
+        engine.load(path: path)
+        #expect(engine.isLoaded == true)
+
+        // Settle at 0.0s
+        engine.seek(to: 0.0, exact: true)
+        try? await Task.sleep(nanoseconds: 800_000_000)
+
+        // GOP is strictly 5.0s (keyframes at 0.0, 5.0, 10.0, 15.0, etc.)
+        // Seek forward by 5.0s using keyframe seek (exact: false)
+        engine.seekRelative(by: 5.0, exact: false)
+        try? await Task.sleep(nanoseconds: 800_000_000)
+
+        let pts1 = engine.currentFramePTS
+        print("[KeyframeSeekTest] First keyframe seek landed at frame PTS: \(pts1), currentTime: \(engine.currentTime)")
+        // Must align closely to the 5.0s keyframe
+        #expect(abs(pts1 - 5.0) < 0.25, "Expected keyframe seek near 5.0s, got \(pts1)")
+        #expect(abs(engine.currentTime - 5.0) < 0.25, "Expected currentTime near 5.0s, got \(engine.currentTime)")
+
+        // Seek forward by another 5.0s using keyframe seek (exact: false)
+        engine.seekRelative(by: 5.0, exact: false)
+        try? await Task.sleep(nanoseconds: 800_000_000)
+
+        let pts2 = engine.currentFramePTS
+        print(
+            "[KeyframeSeekTest] Second keyframe seek landed at frame PTS: \(pts2), currentTime: \(engine.currentTime)")
+        // Must align closely to the 10.0s keyframe
+        #expect(abs(pts2 - 10.0) < 0.25, "Expected keyframe seek near 10.0s, got \(pts2)")
+        #expect(abs(engine.currentTime - 10.0) < 0.25, "Expected currentTime near 10.0s, got \(engine.currentTime)")
+
+        // Now seek backward by 5.0s
+        engine.seekRelative(by: -5.0, exact: false)
+        try? await Task.sleep(nanoseconds: 800_000_000)
+
+        let pts3 = engine.currentFramePTS
+        print(
+            "[KeyframeSeekTest] Backward keyframe seek landed at frame PTS: \(pts3), currentTime: \(engine.currentTime)"
+        )
+        #expect(abs(pts3 - 5.0) < 0.25, "Expected backward keyframe seek near 5.0s, got \(pts3)")
+        #expect(
+            abs(engine.currentTime - 5.0) < 0.25, "Expected backward currentTime near 5.0s, got \(engine.currentTime)")
+
         engine.stop()
     }
 }

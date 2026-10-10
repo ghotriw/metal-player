@@ -220,7 +220,7 @@ struct PlayerEngineTests {
     @Test("Engine play restarts from start when in completed state")
     @MainActor
     func testPlayRestartsWhenCompleted() {
-        guard let referencePath = SyntheticTestMediaFactory.ensureMedia(preset: .uhdHDRSubtitles) else { return }
+        guard let referencePath = SyntheticTestMediaFactory.ensureMedia(preset: .hevc10BitHDR) else { return }
         guard FileManager.default.fileExists(atPath: referencePath) else {
             return
         }

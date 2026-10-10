@@ -21,6 +21,7 @@ public final class FrameQueue: @unchecked Sendable {
     private var head: Int = 0
     private var countInternal: Int = 0
     private var lastRenderedBuffer: CVPixelBuffer?
+    private var lastRenderedPTS: Double = -1.0
     private var droppedFramesCountInternal: Int = 0
 
     public init(capacity: Int = defaultCapacity) {
@@ -152,6 +153,9 @@ public final class FrameQueue: @unchecked Sendable {
 
         if let chosen {
             lastRenderedBuffer = chosen
+            if chosenPts.isValid {
+                lastRenderedPTS = chosenPts.seconds
+            }
             return (chosen, chosenPts)
         }
         return nil
@@ -165,18 +169,23 @@ public final class FrameQueue: @unchecked Sendable {
 
         let leadThreshold = syncTime + CMTime(value: 100, timescale: 1000)
         var latestMatching: CVPixelBuffer?
+        var matchingPts: CMTime = .invalid
 
         // Scan backward from newest frame
         for i in stride(from: countInternal - 1, through: 0, by: -1) {
             let physicalIdx = (head + i) % capacity
             if let frame = buffer[physicalIdx], !frame.doNotDisplay, frame.pts <= leadThreshold {
                 latestMatching = frame.pixelBuffer
+                matchingPts = frame.pts
                 break
             }
         }
 
         if let latestMatching {
             lastRenderedBuffer = latestMatching
+            if matchingPts.isValid {
+                lastRenderedPTS = matchingPts.seconds
+            }
             return latestMatching
         }
 
@@ -185,11 +194,29 @@ public final class FrameQueue: @unchecked Sendable {
             let physicalIdx = (head + i) % capacity
             if let frame = buffer[physicalIdx], !frame.doNotDisplay {
                 lastRenderedBuffer = frame.pixelBuffer
+                if frame.pts.isValid {
+                    lastRenderedPTS = frame.pts.seconds
+                }
                 return frame.pixelBuffer
             }
         }
 
         return lastRenderedBuffer
+    }
+
+    /// Explicitly updates the last rendered frame and its presentation timestamp.
+    public func setLastRendered(buffer: CVPixelBuffer, pts: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        lastRenderedBuffer = buffer
+        lastRenderedPTS = pts
+    }
+
+    /// Returns the presentation timestamp (in seconds) of the most recently rendered frame.
+    public func getLastRenderedPTS() -> Double {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastRenderedPTS
     }
 
     /// Returns the most recently rendered `CVPixelBuffer` for freeze-frame display parity during pause.
@@ -216,6 +243,7 @@ public final class FrameQueue: @unchecked Sendable {
         head = 0
         countInternal = 0
         lastRenderedBuffer = nil
+        lastRenderedPTS = -1.0
         if resetDroppedFrames {
             droppedFramesCountInternal = 0
         }

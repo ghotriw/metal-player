@@ -235,9 +235,11 @@ public final class PlayerEngine: PlayerEngineProtocol {
     @ObservationIgnored
     private var chaseTargetTime: Double? = nil
     @ObservationIgnored
+    private var chaseExactSeek: Bool = true
+    @ObservationIgnored
     private var resumePlaybackAfterChase: Bool = false
     @ObservationIgnored
-    private var seekDebounceTask: Task<Void, Never>? = nil
+    private var chaseSettleTask: Task<Void, Never>? = nil
     private var audioConfigObserver: (any NSObjectProtocol)?
     private var audioAutoFlushObserver: (any NSObjectProtocol)?
     private var timeObserver: Any?
@@ -263,6 +265,9 @@ public final class PlayerEngine: PlayerEngineProtocol {
     private var metricsTimer: (any DispatchSourceTimer)?
 
     private let frameQueue = FrameQueue()
+    public var currentFramePTS: Double {
+        frameQueue.getLastRenderedPTS()
+    }
     private var displayLink: CADisplayLink?
     private var displayLinkTarget: DisplayLinkTarget?
 
@@ -317,14 +322,17 @@ public final class PlayerEngine: PlayerEngineProtocol {
         updateEffectiveRenderMode()
         setupMetricsMonitoring()
 
-        timeObserver = synchronizer.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main)
-        { [weak self] time in
+        // Update playback position at 10 Hz (every 100ms, matching IINA AppData.syncTimeInterval = 0.1s)
+        timeObserver = synchronizer.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 20), queue: .main)
+        { [weak self] _ in
             guard let self else { return }
-            let seconds = CMTimeGetSeconds(time)
-            if !seconds.isNaN && !seconds.isInfinite && seconds >= 0 {
-                MainActor.assumeIsolated {
-                    // Do not overwrite currentTime while a seek is in flight or chasing a target
-                    guard self.chaseTargetTime == nil && !self.isSeeking else { return }
+            MainActor.assumeIsolated {
+                // Do not overwrite currentTime while a seek is in flight or chasing a target
+                guard self.chaseTargetTime == nil && !self.isSeeking else { return }
+                // Re-read the clock NOW: the callback's `time` argument may be stale (captured before a
+                // seek settled), which would roll the UI position back to a pre-seek value.
+                let seconds = CMTimeGetSeconds(self.synchronizer.currentTime())
+                if !seconds.isNaN && !seconds.isInfinite && seconds >= 0 {
                     self.currentTime = seconds
                     self.onTimeUpdate?(seconds, self.duration)
 
@@ -558,6 +566,16 @@ public final class PlayerEngine: PlayerEngineProtocol {
             metalRenderer?.render(pixelBuffer: buffer)
         } else {
             presentToDisplayLayer(pixelBuffer: buffer)
+        }
+    }
+
+    /// Directly renders a decoded pixel buffer onto the active video canvas and updates last rendered state.
+    public func renderDirect(pixelBuffer: CVPixelBuffer, pts: Double) {
+        frameQueue.setLastRendered(buffer: pixelBuffer, pts: pts)
+        if activeRenderMode == .metalToneMap {
+            metalRenderer?.render(pixelBuffer: pixelBuffer)
+        } else {
+            presentToDisplayLayer(pixelBuffer: pixelBuffer)
         }
     }
 
@@ -1503,8 +1521,8 @@ public final class PlayerEngine: PlayerEngineProtocol {
         stopFeedingAudio()
         seekTask?.cancel()
         seekTask = nil
-        seekDebounceTask?.cancel()
-        seekDebounceTask = nil
+        chaseSettleTask?.cancel()
+        chaseSettleTask = nil
     }
 
     /// Stops audio/video feeding and halts the clock, marking playback as paused.
@@ -1523,45 +1541,43 @@ public final class PlayerEngine: PlayerEngineProtocol {
     }
 
     public func seek(to seconds: Double) {
-        let target = max(0, seconds)
-        AppLog.info(.engine, "Seek requested to seconds: \(target)")
+        seek(to: seconds, exact: true)
+    }
+
+    public func seek(to seconds: Double, exact: Bool) {
+        let target = max(0, duration > 0 ? min(seconds, duration) : seconds)
+        AppLog.info(.engine, "Seek requested to seconds: \(target), exact: \(exact)")
         guard demuxer != nil else { return }
 
-        // 1. Maintain play intent across seek bursts (Apple QA1820)
+        // Cancel any pending settle debounce from an earlier seek in the burst
+        chaseSettleTask?.cancel()
+        chaseSettleTask = nil
+
+        // 1. Maintain play intent across seek bursts (Apple QA1820 / mpv)
         if !isSeeking && chaseTargetTime == nil {
             resumePlaybackAfterChase = isPlaying
+            if isPlaying {
+                // Instantly pause playback clock during active seek burst to prevent clock jitter
+                synchronizer.setRate(0.0, time: synchronizer.currentTime())
+            }
         }
 
-        // 2. Immediate responsive UI update
+        // 2. Immediate responsive UI update (0ms latency)
         chaseTargetTime = target
+        chaseExactSeek = exact
         currentTime = target
         updateActiveSubtitles(at: target)
 
-        // 3. Initiate or coalesce via chase pattern
-        if !isSeeking {
-            trySeekToChaseTime()
-        }
-    }
+        // 3. Increment generation token
+        currentSeekId += 1
+        let seekId = currentSeekId
+        activeSeekId.withLock { $0 = seekId }
 
-    private func trySeekToChaseTime() {
-        guard self.demuxer != nil else { return }
-
-        // Cancel any pending debounced seek trigger
-        seekDebounceTask?.cancel()
-        seekDebounceTask = nil
-
-        // If a chase seek is currently in flight on seekQueue, let it complete;
-        // completeChaseSeek will pick up the latest chaseTargetTime upon completion.
+        // 4. If a seek is already in flight on seekQueue, let it complete its current work;
+        // it will check activeSeekId and latest chaseTargetTime upon finishing.
         if isSeeking { return }
 
-        // Coalesce rapid consecutive seek events (e.g. repeated arrow keys or timeline scrubbing)
-        // by waiting 75ms for user input to settle before triggering heavy demuxer I/O and pipeline flush.
-        seekDebounceTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 75_000_000)  // 75ms debounce window
-            guard !Task.isCancelled, let self else { return }
-            self.seekDebounceTask = nil
-            self.executeDemuxerSeek()
-        }
+        executeDemuxerSeek()
     }
 
     private func executeDemuxerSeek() {
@@ -1569,108 +1585,203 @@ public final class PlayerEngine: PlayerEngineProtocol {
         guard let demuxer = self.demuxer else { return }
 
         isSeeking = true
-        currentSeekId += 1
+        let isExact = self.chaseExactSeek
         let seekId = currentSeekId
-        activeSeekId.withLock { $0 = seekId }
 
-        // Halt clock and media delivery for this seek cycle without clearing displayed video or toggling isPlaying
-        haltPlaybackPipeline()
-        audioReceiver.flush()
-        audioDecoder?.flush()
+        let shouldResume = self.resumePlaybackAfterChase
+
+        // Stop feeding packets from the old position.
+        isFeeding.withLock { $0 = false }
+        stopFeedingVideo()
+        stopFeedingAudio()
         frameQueue.clear(resetDroppedFrames: true)
 
-        let targetTime = CMTime(seconds: targetSeconds, preferredTimescale: 1000)
         let decoder = self.decoder
+        let audioDecoder = self.audioDecoder
+        let audioReceiver = self.audioReceiver
         let hasVideo = self.hasVideo
-        let shouldResume = self.resumePlaybackAfterChase
         let seekIdLock = self.activeSeekId
+        let frameQueue = self.frameQueue
 
-        seekQueue.async { [weak self, demuxer, decoder] in
+        seekQueue.async { [weak self, demuxer, decoder, frameQueue] in
             guard let self else { return }
 
-            // Early check: if superseded by a newer seek, bail out immediately
-            guard seekIdLock.withLock({ $0 == seekId }) else { return }
-
-            if hasVideo {
-                decoder.flush()
+            let isSuperseded = {
+                seekIdLock.withLock { $0 != seekId }
             }
-            demuxer.seek(to: targetSeconds)
 
-            // Early check after demuxer seek
-            guard seekIdLock.withLock({ $0 == seekId }) else { return }
+            if !isSuperseded() {
+                if hasVideo {
+                    decoder.flush()
+                }
+                demuxer.seek(to: targetSeconds, exact: isExact)
+            }
 
-            // Only decode preview frames when PAUSED (during active playback, startFeeding feeds naturally)
-            if !shouldResume && hasVideo {
-                Self.seekPreview(
+            var previewFrame: SeekPreviewResult? = nil
+            if hasVideo {
+                previewFrame = Self.seekPreview(
                     demuxer: demuxer,
                     decoder: decoder,
+                    frameQueue: frameQueue,
                     seconds: targetSeconds,
-                    isCurrent: {
-                        seekIdLock.withLock { $0 == seekId }
-                    }
+                    exact: isExact,
+                    isCurrent: { !isSuperseded() }
                 )
-                demuxer.purgeAudio(beforeSeconds: targetSeconds)
+                let resolvedSeconds = previewFrame?.pts ?? targetSeconds
+                if !isExact, let preview = previewFrame {
+                    demuxer.setTargetAudioPts(seconds: preview.pts)
+                }
+                if !shouldResume {
+                    demuxer.purgeAudio(beforeSeconds: resolvedSeconds)
+                }
+                // Render the freshly previewed frame directly (avoiding queue miss & stale fallback)
+                if !isSuperseded(), let preview = previewFrame {
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self, self.currentSeekId == seekId else { return }
+                        self.renderDirect(pixelBuffer: preview.pixelBuffer, pts: preview.pts)
+                    }
+                }
+            }
+
+            // Expensive audio reset only for the seek that is still current (final chase target).
+            if !isSuperseded() {
+                audioDecoder?.flush()
+                audioReceiver.flush()
             }
 
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.currentSeekId == seekId else { return }
-                self.completeChaseSeek(completedSeconds: targetSeconds, targetTime: targetTime, seekId: seekId)
+                guard let self else { return }
+                // If superseded by a newer target, immediately continue to the latest chase position
+                if self.currentSeekId != seekId {
+                    if self.chaseTargetTime != nil {
+                        self.executeDemuxerSeek()
+                    } else {
+                        self.isSeeking = false
+                    }
+                    return
+                }
+                let resolvedSeconds = (!isExact && previewFrame != nil) ? previewFrame!.pts : targetSeconds
+                let resolvedTime = CMTime(seconds: resolvedSeconds, preferredTimescale: 1000)
+                self.completeChaseSeek(
+                    targetSeconds: targetSeconds,
+                    completedSeconds: resolvedSeconds,
+                    targetTime: resolvedTime,
+                    seekId: seekId
+                )
             }
         }
     }
 
-    private func completeChaseSeek(completedSeconds: Double, targetTime: CMTime, seekId: Int) {
-        guard currentSeekId == seekId else { return }
+    private func completeChaseSeek(
+        targetSeconds: Double,
+        completedSeconds: Double,
+        targetTime: CMTime,
+        seekId: Int
+    ) {
+        guard currentSeekId == seekId else {
+            if chaseTargetTime != nil {
+                executeDemuxerSeek()
+            } else {
+                self.isSeeking = false
+            }
+            return
+        }
 
-        // Check if user requested a newer position while this seek was executing (Apple QA1820)
-        if let latestTarget = chaseTargetTime, abs(latestTarget - completedSeconds) > 0.001 {
+        // Check if user requested a newer position while this seek was executing (Apple QA1820 / mpv queue_seek)
+        if let latestTarget = chaseTargetTime, abs(latestTarget - targetSeconds) > 0.001 {
             // Chase the newer target immediately without resuming yet.
-            // Note: isSeeking is true, so executeDemuxerSeek directly to perform the next chase step.
             executeDemuxerSeek()
             return
         }
 
-        // Settled at final chase target: finish seeking cycle
+        // Settled decoding for this position. Mark seek background work as done.
         isSeeking = false
-        chaseTargetTime = nil
+
+        if hasVideo {
+            renderCurrentFrame(at: targetTime)
+        }
+
         let shouldResume = resumePlaybackAfterChase
-
-        // Always update currentTime immediately so subsequent relative seeks calculate from the correct base
-        self.currentTime = completedSeconds
-
-        if shouldResume {
-            startFeeding()
-            synchronizer.setRate(1.0, time: targetTime)
-            displayLink?.isPaused = !hasVideo
-            isPlaying = true
-            playbackState = .playing
-            performanceMonitor.handlePlaybackStateChange(isPlaying: true)
-        } else {
+        if !shouldResume {
+            // Paused mode: settle immediately
+            chaseTargetTime = nil
+            self.currentTime = completedSeconds
             synchronizer.setRate(0.0, time: targetTime)
             isPlaying = false
             playbackState = .paused
             performanceMonitor.handlePlaybackStateChange(isPlaying: false)
-            if hasVideo {
-                renderCurrentFrame(at: targetTime)
-            }
+            AppLog.debug(.engine, "Chase seek settled at \(completedSeconds)s (paused)")
+            return
         }
-        AppLog.debug(.engine, "Chase seek settled at \(completedSeconds)s (playing: \(shouldResume))")
+
+        // Playing mode: debounce resumption slightly (120ms) so that sustained key-hold repeat
+        // events (which fire every 40-70ms) don't repeatedly unpause and roll the clock forward.
+        chaseSettleTask?.cancel()
+        chaseSettleTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 120_000_000)  // 120ms debounce
+            guard !Task.isCancelled, let self, self.currentSeekId == seekId else { return }
+
+            self.chaseTargetTime = nil
+            self.currentTime = completedSeconds
+            self.startFeeding()
+            self.synchronizer.setRate(1.0, time: targetTime)
+            self.displayLink?.isPaused = !self.hasVideo
+            self.isPlaying = true
+            self.playbackState = .playing
+            self.performanceMonitor.handlePlaybackStateChange(isPlaying: true)
+            AppLog.debug(.engine, "Chase seek settled and resumed at \(completedSeconds)s")
+        }
+    }
+
+    private struct SeekPreviewResult: @unchecked Sendable {
+        let pixelBuffer: CVPixelBuffer
+        let pts: Double
+    }
+
+    private final class SeekPreviewBox: @unchecked Sendable {
+        var buffer: CVPixelBuffer?
+        var pts: Double = -1.0
     }
 
     private nonisolated static func seekPreview(
         demuxer: MediaDemuxer,
         decoder: VTVideoDecoder,
+        frameQueue: FrameQueue,
         seconds: Double,
+        exact: Bool,
         isCurrent: () -> Bool
-    ) {
+    ) -> SeekPreviewResult? {
+        let lock = OSAllocatedUnfairLock()
+        let box = SeekPreviewBox()
+        decoder.setOutputHandler { frame in
+            frameQueue.push(frame)
+            if !frame.doNotDisplay && frame.pts.isValid {
+                lock.lock()
+                box.buffer = frame.pixelBuffer
+                box.pts = frame.pts.seconds
+                lock.unlock()
+            }
+        }
+
+        defer {
+            decoder.setOutputHandler { [weak frameQueue] frame in
+                frameQueue?.push(frame)
+            }
+        }
+
         var attempts = 0
         var foundTarget = false
-        while attempts < 120 && !foundTarget && isCurrent() {
+        var decodedAtLeastOne = false
+        // For non-exact (keyframe) seeks (IINA / mpv style), decode exactly 1 keyframe and return immediately.
+        // For exact seeks, decode from keyframe up to target seconds.
+        let maxAttempts = exact ? 120 : 1
+        while attempts < maxAttempts && !foundTarget && (isCurrent() || !decodedAtLeastOne) {
             if let sample = demuxer.nextVideoSample() {
                 let pts = CMSampleBufferGetPresentationTimeStamp(sample)
                 decoder.decode(sampleBuffer: sample)
+                decodedAtLeastOne = true
                 attempts += 1
-                if CMTimeGetSeconds(pts) >= seconds {
+                if !exact || CMTimeGetSeconds(pts) >= seconds {
                     foundTarget = true
                 }
             } else {
@@ -1678,12 +1789,26 @@ public final class PlayerEngine: PlayerEngineProtocol {
             }
         }
         decoder.flush()
+
+        lock.lock()
+        let finalBuf = box.buffer
+        let finalPts = box.pts
+        lock.unlock()
+
+        if let finalBuf, finalPts >= 0 {
+            return SeekPreviewResult(pixelBuffer: finalBuf, pts: finalPts)
+        }
+        return nil
     }
 
     public func seekRelative(by seconds: Double) {
+        seekRelative(by: seconds, exact: false)
+    }
+
+    public func seekRelative(by seconds: Double, exact: Bool) {
         let baseTime = chaseTargetTime ?? currentTime
         let target = max(0, duration > 0 ? min(baseTime + seconds, duration) : baseTime + seconds)
-        seek(to: target)
+        seek(to: target, exact: exact)
     }
 
     public func stepFrameForward() {

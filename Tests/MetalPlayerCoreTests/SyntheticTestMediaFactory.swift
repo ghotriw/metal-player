@@ -18,6 +18,8 @@ public enum SyntheticTestMediaFactory {
         /// Audio codec/layout matrix with a distinct tone per channel (6 seconds): E-AC3 5.1, Opus 5.1, AAC 7.1,
         /// MP3 44.1kHz stereo, AC3 44.1kHz stereo (resampling), TrueHD 5.1, PCM 24-bit 5.1
         case audioCodecMatrix
+        /// H.264 video (60s) with strictly spaced keyframes every 5.0 seconds (GOP=120 @ 24fps, no scenecut)
+        case wideGOPH264
 
         public var filename: String {
             switch self {
@@ -33,6 +35,8 @@ public enum SyntheticTestMediaFactory {
                 return "synth_exotic_audio_tracks.mkv"
             case .uhdHDRSubtitles:
                 return "synth_uhd_hdr_5subs.mkv"
+            case .wideGOPH264:
+                return "synth_wide_gop_h264_5s.mp4"
             }
         }
     }
@@ -213,6 +217,20 @@ public enum SyntheticTestMediaFactory {
                 "-colorspace", "bt2020nc",
                 "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
                 "-c:a", "aac", "-b:a", "192k",
+                outputPath,
+            ]
+
+        case .wideGOPH264:
+            // 60 seconds H.264 (640x360 @ 24fps)
+            // Strictly spaced keyframes every 5.0 seconds: GOP=120, keyint_min=120, sc_threshold=0 (no scenecut)
+            // AAC stereo audio
+            return [
+                "-y",
+                "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24:duration=60",
+                "-f", "lavfi", "-i", "sine=frequency=440:duration=60",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-g", "120", "-keyint_min", "120", "-sc_threshold", "0",
+                "-c:a", "aac", "-b:a", "128k",
                 outputPath,
             ]
         }

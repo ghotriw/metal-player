@@ -34,12 +34,17 @@ public final class MediaDemuxer: @unchecked Sendable {
     public private(set) var subtitleTracks: [SubtitleTrack] = []
     public private(set) var selectedSubtitleTrackId: Int? = nil
     private var selectedSubtitleStreamIndex: Int = -1
-    private var liveSubtitleCues: [SubtitleCue] = []
-    private var liveSubtitleVersionInternal: Int = 0
+    private struct LiveSubtitleState {
+        var cues: [SubtitleCue] = []
+        var version: Int = 0
+    }
+    /// Live in-band subtitle state is guarded by its own lightweight lock, NOT the I/O `lock`.
+    /// `lock` is held across blocking `av_read_frame` / `av_seek_frame` calls (hundreds of ms on
+    /// network streams); readers on the main thread must never contend with it.
+    /// Lock order: `lock` -> `liveSubtitleState` (never the reverse).
+    private let liveSubtitleState = OSAllocatedUnfairLock(initialState: LiveSubtitleState())
     public var liveSubtitleVersion: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return liveSubtitleVersionInternal
+        liveSubtitleState.withLock { $0.version }
     }
     private var cachedSubtitleDocuments: [Int: SubtitleDocument] = [:]
     private var lastAudioPts: Int64 = -1
@@ -84,8 +89,10 @@ public final class MediaDemuxer: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         self.selectedSubtitleTrackId = trackId
-        self.liveSubtitleCues.removeAll()
-        self.liveSubtitleVersionInternal += 1
+        liveSubtitleState.withLock { state in
+            state.cues.removeAll()
+            state.version += 1
+        }
         if let trackId, let track = subtitleTracks.first(where: { $0.id == trackId }) {
             self.selectedSubtitleStreamIndex = track.streamIndex
             AppLog.info(
@@ -98,10 +105,9 @@ public final class MediaDemuxer: @unchecked Sendable {
     }
 
     /// Returns a SubtitleDocument with all cues collected in-band so far for the active subtitle track.
+    /// Never touches the I/O lock, so it is safe to call from the main thread during network reads/seeks.
     public func getLiveSubtitleDocument() -> SubtitleDocument {
-        lock.lock()
-        let cues = self.liveSubtitleCues
-        lock.unlock()
+        let cues = liveSubtitleState.withLock { $0.cues }
         return SubtitleDocument(cues: cues)
     }
 
@@ -287,20 +293,21 @@ public final class MediaDemuxer: @unchecked Sendable {
 
         let timebase = stream.pointee.time_base
         let codecId = stream.pointee.codecpar.pointee.codec_id
-        let nextIndex = liveSubtitleCues.count + 1
+        let nextIndex = liveSubtitleState.withLock { $0.cues.count } + 1
 
         guard let newCue = Self.parseSubtitleCue(pkt: pkt, timebase: timebase, codecId: codecId, cueIndex: nextIndex)
         else {
             return
         }
 
-        // Avoid adding duplicate cues if stream loops, repeats packets, or seeks backward
-        if liveSubtitleCues.contains(where: { abs($0.startTime - newCue.startTime) < 0.05 && $0.text == newCue.text }) {
-            return
+        liveSubtitleState.withLock { state in
+            // Avoid adding duplicate cues if stream loops, repeats packets, or seeks backward
+            if state.cues.contains(where: { abs($0.startTime - newCue.startTime) < 0.05 && $0.text == newCue.text }) {
+                return
+            }
+            state.cues.append(newCue)
+            state.version += 1
         }
-
-        liveSubtitleCues.append(newCue)
-        liveSubtitleVersionInternal += 1
     }
 
     // Packet queue for demuxed audio packets
@@ -1364,7 +1371,7 @@ public final class MediaDemuxer: @unchecked Sendable {
         return nil
     }
 
-    public func seek(to seconds: Double) {
+    public func seek(to seconds: Double, exact: Bool = true) {
         lock.lock()
         defer { lock.unlock() }
         guard let ctx = formatCtx else { return }
@@ -1379,13 +1386,25 @@ public final class MediaDemuxer: @unchecked Sendable {
         }
         guard timebase.num > 0 else { return }
         let target = Int64(seconds * Double(timebase.den) / Double(timebase.num))
-        self.targetPts = target
+        // If not exact (keyframe seek), don't set targetPts threshold so that the keyframe sample is displayed immediately
+        self.targetPts = exact ? target : -1
         let streamIdx = videoStreamIndex >= 0 ? videoStreamIndex : audioStreamIndex
         let ret = av_seek_frame(ctx, Int32(streamIdx), target, AVSEEK_FLAG_BACKWARD)
         AppLog.debug(
             .demuxer,
-            "av_seek_frame to targetPts: \(target), targetAudioPts: \(self.targetAudioPts) (seconds: \(seconds)), stream: \(streamIdx), ret: \(ret)"
+            "av_seek_frame to targetPts: \(target) (exact: \(exact)), targetAudioPts: \(self.targetAudioPts) (seconds: \(seconds)), stream: \(streamIdx), ret: \(ret)"
         )
+    }
+
+    /// Adjusts the target audio presentation timestamp (e.g. to align with the actual decoded keyframe PTS).
+    public func setTargetAudioPts(seconds: Double) {
+        lock.lock()
+        defer { lock.unlock() }
+        if audioTimebase.den > 0 && audioTimebase.num > 0 {
+            self.targetAudioPts = Int64(seconds * Double(audioTimebase.den) / Double(audioTimebase.num))
+        } else {
+            self.targetAudioPts = -1
+        }
     }
 
     /// Discards any audio packets queued prior to the specified target time in seconds.

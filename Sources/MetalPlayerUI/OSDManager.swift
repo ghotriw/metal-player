@@ -15,9 +15,26 @@ public final class OSDManager {
     /// Presents an OSD event and schedules auto-hiding after `duration` seconds.
     public func show(_ event: OSDEvent, duration: Double = 1.3) {
         hideTask?.cancel()
-        currentEvent = event
-        withAnimation(.easeOut(duration: 0.15)) {
-            isVisible = true
+
+        // Accumulate seek offset if user is rapidly seeking
+        let resolvedEvent: OSDEvent
+        if case .seek(let newOffset, _, let durationTime) = event,
+            case .seek(let prevOffset, let prevTime, _) = currentEvent,
+            isVisible
+        {
+            let combinedOffset = prevOffset + newOffset
+            let targetTime = prevTime + newOffset
+            resolvedEvent = .seek(offsetSeconds: combinedOffset, currentTime: targetTime, duration: durationTime)
+        } else {
+            resolvedEvent = event
+        }
+
+        currentEvent = resolvedEvent
+
+        if !isVisible {
+            withAnimation(.easeOut(duration: 0.15)) {
+                isVisible = true
+            }
         }
 
         let validDuration = duration.isFinite ? max(0.2, duration) : 1.3
