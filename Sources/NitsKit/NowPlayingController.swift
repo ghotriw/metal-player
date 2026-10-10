@@ -264,27 +264,20 @@ public struct NowPlayingThrottler: Sendable {
             self.model = model
 
             model.onTogglePlayPause = { [weak self] in
-                guard let self else { return }
-                if let actions = self.actions {
-                    actions.togglePlayPause()
-                } else {
-                    self.engine?.togglePlayPause()
-                }
+                self?.executeTogglePlayPause()
             }
 
             model.onPlay = { [weak self] in
-                guard let self else { return }
-                self.engine?.play()
+                self?.executePlay()
             }
 
             model.onPause = { [weak self] in
-                guard let self else { return }
-                self.engine?.pause()
+                self?.executePause()
             }
 
             model.onSeekToPosition = { [weak self] seconds in
                 guard let self else { return }
-                self.engine?.seek(to: seconds)
+                self.executeSeek(to: seconds)
                 // Immediately sync model currentTime so the scrubber doesn't snap back when paused
                 self.model.currentTime = seconds
                 self.throttler.forceRecord(
@@ -296,11 +289,7 @@ public struct NowPlayingThrottler: Sendable {
 
             model.onSkip = { [weak self] delta in
                 guard let self else { return }
-                if let actions = self.actions {
-                    actions.seekRelative(by: delta)
-                } else {
-                    self.engine?.seekRelative(by: delta)
-                }
+                self.executeSkip(by: delta)
                 if let engine = self.engine {
                     self.model.currentTime = engine.currentTime
                     self.throttler.forceRecord(
@@ -309,6 +298,46 @@ public struct NowPlayingThrottler: Sendable {
                         isPlaying: self.model.isPlaying
                     )
                 }
+            }
+        }
+
+        private func executeTogglePlayPause() {
+            if let actions {
+                actions.togglePlayPause()
+            } else {
+                engine?.togglePlayPause()
+            }
+        }
+
+        private func executePlay() {
+            if let actions {
+                actions.play()
+            } else {
+                engine?.play()
+            }
+        }
+
+        private func executePause() {
+            if let actions {
+                actions.pause()
+            } else {
+                engine?.pause()
+            }
+        }
+
+        private func executeSeek(to seconds: Double) {
+            if let actions {
+                actions.seek(to: seconds)
+            } else {
+                engine?.seek(to: seconds)
+            }
+        }
+
+        private func executeSkip(by delta: Double) {
+            if let actions {
+                actions.seekRelative(by: delta)
+            } else {
+                engine?.seekRelative(by: delta)
             }
         }
 
@@ -450,32 +479,23 @@ public final class LegacyMediaPlayerController: NowPlayingController {
         center.togglePlayPauseCommand.isEnabled = true
         let toggleTarget = center.togglePlayPauseCommand.addTarget { [weak self] _ in
             guard let self, self.isActive else { return .noActionableNowPlayingItem }
-            if let actions = self.actions {
-                actions.togglePlayPause()
-            } else if let engine = self.engine {
-                engine.togglePlayPause()
-            } else {
-                return .noActionableNowPlayingItem
-            }
-            return .success
+            return self.executeTogglePlayPause() ? .success : .noActionableNowPlayingItem
         }
         targets.append((center.togglePlayPauseCommand, toggleTarget))
 
         // 2. Play command
         center.playCommand.isEnabled = true
         let playTarget = center.playCommand.addTarget { [weak self] _ in
-            guard let self, self.isActive, let engine = self.engine else { return .noActionableNowPlayingItem }
-            engine.play()
-            return .success
+            guard let self, self.isActive else { return .noActionableNowPlayingItem }
+            return self.executePlay() ? .success : .noActionableNowPlayingItem
         }
         targets.append((center.playCommand, playTarget))
 
         // 3. Pause command
         center.pauseCommand.isEnabled = true
         let pauseTarget = center.pauseCommand.addTarget { [weak self] _ in
-            guard let self, self.isActive, let engine = self.engine else { return .noActionableNowPlayingItem }
-            engine.pause()
-            return .success
+            guard let self, self.isActive else { return .noActionableNowPlayingItem }
+            return self.executePause() ? .success : .noActionableNowPlayingItem
         }
         targets.append((center.pauseCommand, pauseTarget))
 
@@ -483,19 +503,18 @@ public final class LegacyMediaPlayerController: NowPlayingController {
         center.changePlaybackPositionCommand.isEnabled = true
         let posTarget = center.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let self, self.isActive,
-                let positionEvent = event as? MPChangePlaybackPositionCommandEvent,
-                let engine = self.engine
+                let positionEvent = event as? MPChangePlaybackPositionCommandEvent
             else {
                 return .commandFailed
             }
             let targetSeconds = positionEvent.positionTime
-            engine.seek(to: targetSeconds)
+            guard self.executeSeek(to: targetSeconds) else { return .commandFailed }
             // Immediately sync so scrubber position doesn't bounce back on pause
             self.forceUpdateNowPlayingInfo(
                 title: self.throttler.lastReportedTitle,
                 currentTime: targetSeconds,
-                duration: engine.duration,
-                isPlaying: engine.isPlaying
+                duration: self.engine?.duration ?? 0,
+                isPlaying: self.engine?.isPlaying ?? false
             )
             return .success
         }
@@ -508,10 +527,14 @@ public final class LegacyMediaPlayerController: NowPlayingController {
             guard let self, self.isActive else { return .noActionableNowPlayingItem }
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 10
             let step = interval > 0 ? interval : 10
-            if let actions = self.actions {
-                actions.seekRelative(by: step)
-            } else if let engine = self.engine {
-                engine.seekRelative(by: step)
+            guard self.executeSkip(by: step) else { return .noActionableNowPlayingItem }
+            if let engine = self.engine {
+                self.forceUpdateNowPlayingInfo(
+                    title: self.throttler.lastReportedTitle,
+                    currentTime: engine.currentTime,
+                    duration: engine.duration,
+                    isPlaying: engine.isPlaying
+                )
             }
             return .success
         }
@@ -524,14 +547,73 @@ public final class LegacyMediaPlayerController: NowPlayingController {
             guard let self, self.isActive else { return .noActionableNowPlayingItem }
             let interval = (event as? MPSkipIntervalCommandEvent)?.interval ?? 10
             let step = interval > 0 ? interval : 10
-            if let actions = self.actions {
-                actions.seekRelative(by: -step)
-            } else if let engine = self.engine {
-                engine.seekRelative(by: -step)
+            guard self.executeSkip(by: -step) else { return .noActionableNowPlayingItem }
+            if let engine = self.engine {
+                self.forceUpdateNowPlayingInfo(
+                    title: self.throttler.lastReportedTitle,
+                    currentTime: engine.currentTime,
+                    duration: engine.duration,
+                    isPlaying: engine.isPlaying
+                )
             }
             return .success
         }
         targets.append((center.skipBackwardCommand, skipBwdTarget))
+    }
+
+    private func executeTogglePlayPause() -> Bool {
+        if let actions {
+            actions.togglePlayPause()
+            return true
+        } else if let engine {
+            engine.togglePlayPause()
+            return true
+        }
+        return false
+    }
+
+    private func executePlay() -> Bool {
+        if let actions {
+            actions.play()
+            return true
+        } else if let engine {
+            engine.play()
+            return true
+        }
+        return false
+    }
+
+    private func executePause() -> Bool {
+        if let actions {
+            actions.pause()
+            return true
+        } else if let engine {
+            engine.pause()
+            return true
+        }
+        return false
+    }
+
+    private func executeSeek(to seconds: Double) -> Bool {
+        if let actions {
+            actions.seek(to: seconds)
+            return true
+        } else if let engine {
+            engine.seek(to: seconds)
+            return true
+        }
+        return false
+    }
+
+    private func executeSkip(by delta: Double) -> Bool {
+        if let actions {
+            actions.seekRelative(by: delta)
+            return true
+        } else if let engine {
+            engine.seekRelative(by: delta)
+            return true
+        }
+        return false
     }
 
     private func updateCommandsEnabledState() {

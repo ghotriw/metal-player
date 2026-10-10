@@ -343,6 +343,28 @@ extension PlayerWindowController: PlayerActions {
         }
     }
 
+    public func play() {
+        engine.play()
+        if engine.enableOSD {
+            uiState.osd.show(.play)
+        }
+    }
+
+    public func pause() {
+        engine.pause()
+        if engine.enableOSD {
+            uiState.osd.show(.pause)
+        }
+    }
+
+    public func seek(to seconds: Double) {
+        let offset = seconds - engine.currentTime
+        engine.seek(to: seconds)
+        if engine.enableOSD {
+            uiState.osd.show(.seek(offsetSeconds: offset, currentTime: seconds, duration: engine.duration))
+        }
+    }
+
     public func stepFrameForward() {
         engine.stepFrameForward()
         if engine.enableOSD {

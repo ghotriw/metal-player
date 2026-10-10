@@ -13,6 +13,9 @@ public protocol PlayerActions: AnyObject {
     var isJumpToPresented: Bool { get }
 
     func togglePlayPause()
+    func play()
+    func pause()
+    func seek(to seconds: Double)
     func stepFrameForward()
     func stepFrameBackward()
     func seekRelative(by seconds: Double)
@@ -30,6 +33,9 @@ extension PlayerActions {
     public var isJumpToPresented: Bool { false }
     public func promptJumpToTime() {}
     public func dismissJumpToTime() {}
+    public func play() {}
+    public func pause() {}
+    public func seek(to seconds: Double) {}
 }
 
 public struct PlayerActionsKey: FocusedValueKey {

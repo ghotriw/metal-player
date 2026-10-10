@@ -86,7 +86,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.playerWindowController = nil
             }
             controller.onKeyStatusChanged = { [weak self] isKey in
-                self?.activePlayer = isKey ? self?.playerWindowController : nil
+                if isKey {
+                    self?.activePlayer = self?.playerWindowController
+                }
             }
             playerWindowController = controller
         }

@@ -106,8 +106,8 @@ public struct OSDOverlayView: View {
         case .seek(let offset, _, _):
             let formattedOffset = abs(offset)
             let sign = offset >= 0 ? "+" : "-"
-            if formattedOffset.truncatingRemainder(dividingBy: 1) == 0 {
-                return "\(sign)\(Int(formattedOffset))s"
+            if formattedOffset.truncatingRemainder(dividingBy: 1) == 0 || formattedOffset >= 10.0 {
+                return "\(sign)\(Int(round(formattedOffset)))s"
             } else {
                 return String(format: "%@%.1fs", sign, formattedOffset)
             }
