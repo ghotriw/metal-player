@@ -278,6 +278,8 @@ public final class PlayerEngine: PlayerEngineProtocol {
     private var resumePlaybackAfterChase: Bool = false
     @ObservationIgnored
     private var chaseSettleTask: Task<Void, Never>? = nil
+    @ObservationIgnored
+    private var lastRelativeSeekTimestamp: CFAbsoluteTime = 0
     private var audioConfigObserver: (any NSObjectProtocol)?
     private var audioAutoFlushObserver: (any NSObjectProtocol)?
     private var timeObserver: Any?
@@ -1996,7 +1998,7 @@ public final class PlayerEngine: PlayerEngineProtocol {
         // events (which fire every 40-70ms) don't repeatedly unpause and roll the clock forward.
         chaseSettleTask?.cancel()
         chaseSettleTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 120_000_000)  // 120ms debounce
+            try? await Task.sleep(nanoseconds: 300_000_000)  // 120ms debounce
             guard !Task.isCancelled, let self, self.currentSeekId == seekId else { return }
 
             self.chaseTargetTime = nil
@@ -2080,7 +2082,10 @@ public final class PlayerEngine: PlayerEngineProtocol {
     }
 
     public func seekRelative(by seconds: Double) {
-        seekRelative(by: seconds, exact: false)
+        let now = CFAbsoluteTimeGetCurrent()
+        let isBurst = (now - lastRelativeSeekTimestamp) <= 0.5 || isSeeking || chaseTargetTime != nil
+        lastRelativeSeekTimestamp = now
+        seekRelative(by: seconds, exact: !isBurst)
     }
 
     public func seekRelative(by seconds: Double, exact: Bool) {
